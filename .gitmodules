@@ -1,0 +1,9 @@
+[submodule "libusb"]
+	path = libusb
+	url = https://github.com/nxpfrankli/libusb.git
+[submodule "zlib"]
+	path = zlib
+	url = https://github.com/madler/zlib.git
+[submodule "bzip2"]
+	path = bzip2
+	url = git://sourceware.org/git/bzip2.git
