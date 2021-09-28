@@ -160,10 +160,7 @@ static string get_device_path(libusb_device *dev)
 
 static int open_libusb(libusb_device *dev, void **usb_device_handle)
 {
-	int retry = 1;
-#ifdef WIN32
-	retry = 5;
-#endif
+	int retry = 10;
 
 	while (retry)
 	{
@@ -178,7 +175,7 @@ static int open_libusb(libusb_device *dev, void **usb_device_handle)
 		int ret;
 		if ((ret = libusb_open(dev, (libusb_device_handle **)(usb_device_handle))) < 0)
 		{
-			if ((ret != LIBUSB_ERROR_NOT_SUPPORTED) || (retry == 0))
+			if (retry == 0)
 			{
 				set_last_err_string("Failure open usb device" TRY_SUDO);
 				return -1;
