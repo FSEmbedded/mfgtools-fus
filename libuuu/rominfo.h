@@ -70,5 +70,6 @@ const ROM_INFO * search_rom_info(const ConfigItem *item);
 
 size_t GetContainerActualSize(std::shared_ptr<FileBuffer> p, size_t offset, bool bROMAPI=false);
 size_t GetFlashHeaderSize(std::shared_ptr<FileBuffer> p, size_t offset = 0);
+size_t GetBinaryFromNBoot(std::shared_ptr<FileBuffer> p, size_t offset, size_t * size);
 bool IsMBR(std::shared_ptr<FileBuffer> p);
 size_t ScanTerm(std::shared_ptr<FileBuffer> p, size_t &pos,  size_t offset=512, size_t limited=0x800000);

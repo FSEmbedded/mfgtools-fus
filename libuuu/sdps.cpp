@@ -147,6 +147,9 @@ int SDPSCmd::run(CmdCtx *pro)
 
 	size_t sz = GetContainerActualSize(p, offset, rom->flags & ROM_INFO_HID_ROMAPI);
 
+	/* Skip to SPL in FuS NBoot and overwrite sz */
+	offset += GetBinaryFromNBoot(p, offset, &sz);
+
 	if (!(rom->flags & ROM_INFO_HID_NO_CMD))
 	{
 		_ST_HID_CBW	cbw;
@@ -170,6 +173,10 @@ int SDPSCmd::run(CmdCtx *pro)
 		report.set_out_package_size(1020);
 
 	int ret = report.write(p->data() + offset, sz,  2);
+
+	/* If an error occurs, output the offset and size of the image found */
+	if (ret)
+		printf("offset = 0x%llx, size = 0x%llx\n", offset, sz);
 
 	if (ret ==  0)
 	{

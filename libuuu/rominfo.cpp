@@ -208,6 +208,70 @@ size_t GetFlashHeaderSize(shared_ptr<FileBuffer> p, size_t offset)
 	return 0;
 }
 
+struct fsheader
+{
+	/* fsheader0_0 */
+	byte magic[4];
+	uint32_t file_size_low;
+	uint32_t file_size_high;
+	uint16_t flags;
+	byte padsize;
+	byte version;
+
+	/* fsheader1_0 */
+	byte type[16];
+	byte descr[32];
+};
+
+size_t GetBinaryFromNBoot(shared_ptr<FileBuffer> p, size_t offset, size_t * size)
+{
+	struct fsheader* head;
+	uint8_t* start = p->data() + offset;
+	uint64_t header_size = sizeof(struct fsheader);
+	uint64_t file_size = 0;
+	size_t pos = 0;
+	char sMagic[4+1];
+	char sType[16+1];
+	sMagic[4] = '\0';
+	sType[16] = '\0';
+	bool bMagic = false;
+
+	do {
+		/* Set current header */
+		head = (struct fsheader*) (start + pos);
+
+		/* Get filesize of the data at current header */
+		file_size = head->file_size_high;
+		file_size = file_size << 32;
+		file_size = file_size | (head->file_size_low & 0xFFFFFFFF);
+
+		/* Convert struct elements to comparable strings */
+		memcpy(sMagic, head->magic, sizeof(head->magic));
+		memcpy(sType, head->type, sizeof(head->type));
+
+		bMagic = !strcmp(sMagic,"FSLX");
+		if (!bMagic) {
+			pos = 0;
+			break;
+		}
+
+		if (!strcmp(sType, "SPL")) {
+			*size = file_size;
+			return pos + header_size;
+		}
+
+		/* For these types another header is located directly after */
+		if ((!strcmp(sType, "BOARD-ID") || !strcmp(sType, "NBOOT") || !strcmp(sType, "BOARD-CONFIGS")))
+			file_size = 0;
+
+		/* Update position of the next header */
+		pos += header_size + file_size;
+	} while (bMagic);
+
+	*size = p->size();
+	return pos;
+}
+
 bool IsMBR(shared_ptr<FileBuffer> p)
 {
 	uint16_t * m = (uint16_t *)(p->data() + 510);
