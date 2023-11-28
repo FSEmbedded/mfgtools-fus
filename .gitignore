@@ -13,3 +13,4 @@ Makefile
 CMakeCache.txt
 *.clst
 *.snap
+msvc/bin
