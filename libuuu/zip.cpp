@@ -103,16 +103,16 @@ int Zip::BuildDirInfo()
 	while (i < total)
 	{
 		Zip_central_dir *pdir = (Zip_central_dir *)(zipfile->data() + i);
-		if (pdir->sign != DIR_SIGNTURE)
+		if (pdir->sign != DIR_SIGNATURE)
 		{
-			set_last_err_string("DIR signature missmatched");
+			set_last_err_string("DIR signature mismatched");
 			return -1;
 		}
 		Zip_file_Info info;
 		info.m_filename.append((char*)pdir->filename, pdir->file_name_length);
 		info.m_offset = pdir->offset;
 		info.m_filesize = pdir->uncompressed_size;
-		info.m_timestamp = (pdir->last_modidfy_date << 16) + pdir->last_modidfy_time;
+		info.m_timestamp = (pdir->last_modify_date << 16) + pdir->last_modify_time;
 		info.m_compressedsize = pdir->compressed_size;
 
 		if (pdir->extrafield_length)
@@ -257,7 +257,7 @@ int	Zip_file_Info::decompress(Zip *pZip, shared_ptr<FileBuffer>p)
 
 	if (file_desc->compress_method != 8)
 	{
-		set_last_err_string("Unsupport compress method");
+		set_last_err_string("Unsupported compress method");
 		return -1;
 	}
 
@@ -286,14 +286,18 @@ int	Zip_file_Info::decompress(Zip *pZip, shared_ptr<FileBuffer>p)
 		switch (ret) {
 		case Z_NEED_DICT:
 			ret = Z_DATA_ERROR;     /* and fall through */
+			FALLTHROUGH
+			// FALLTHROUGH
 		case Z_DATA_ERROR:
+			FALLTHROUGH
+			// FALLTHROUGH
 		case Z_MEM_ERROR:
 			(void)inflateEnd(&m_strm);
 			return -1;
 		}
 		size_t have = each_out_size - m_strm.avail_out;
 
-		p->m_avaible_size = pos;
+		p->m_available_size = pos;
 		p->m_request_cv.notify_all();
 
 		pos += have;
@@ -318,7 +322,7 @@ int	Zip_file_Info::decompress(Zip *pZip, shared_ptr<FileBuffer>p)
 		return -1;
 	}
 
-	p->m_avaible_size = m_filesize;
+	p->m_available_size = m_filesize;
 	atomic_fetch_or(&p->m_dataflags, FILEBUFFER_FLAG_LOADED);
 	p->m_request_cv.notify_all();
 

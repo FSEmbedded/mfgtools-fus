@@ -54,8 +54,31 @@ static CmdMap g_cmd_map;
 static CmdObjCreateMap g_cmd_create_map;
 static string g_cmd_list_file;
 
+static map<thread::id, map<string, string>> g_environment;
+
+int insert_env_variable(string key, string value)
+{
+	g_environment[std::this_thread::get_id()][key] = value;
+	return 0;
+}
+
+string get_env_variable(string key)
+{
+	return g_environment[std::this_thread::get_id()][key];
+}
+
+int clear_env()
+{
+	return g_environment.erase(std::this_thread::get_id());
+}
+
+bool is_env_exist(string key)
+{
+	return g_environment[std::this_thread::get_id()].find(key) != g_environment[std::this_thread::get_id()].end();
+}
+
 int get_string_in_square_brackets(const std::string &cmd, std::string &context);
-int parser_cmd_list_file(shared_ptr<FileBuffer> pbuff, CmdMap *pCmdMap = nullptr);
+int parser_cmd_list_file(shared_ptr<DataBuffer> pbuff, CmdMap *pCmdMap = nullptr);
 std::string remove_square_brackets(const std::string &cmd);
 
 template <class T>
@@ -75,16 +98,16 @@ CmdBase::~CmdBase()
 
 int CmdBase::parser(char *p)
 {
-	if (p != nullptr)
-		m_cmd = p;
-
 	size_t pos = 0;
-	string param = get_next_param(m_cmd, pos);
+	string param;
 
-	if (param.find(':') != string::npos)
+	if (parser_protocol(p, pos))
+		return -1;
+
+	if (pos < m_cmd.size())
 		param = get_next_param(m_cmd, pos);
 
-	int index = 0;
+	size_t index = 0;
 
 	while (pos < m_cmd.size())
 	{
@@ -131,6 +154,13 @@ int CmdBase::parser(char *p)
 			*(uint32_t*)pp->pData = str_to_uint32(param);
 		}
 
+		if (pp->type == Param::Type::e_uint64)
+		{
+			if (!m_NoKeyParam)
+				param = get_next_param(m_cmd, pos);
+			*(uint64_t*)pp->pData = str_to_uint64(param);
+		}
+
 		if (pp->type == Param::Type::e_string_filename)
 		{
 			if (!m_NoKeyParam)
@@ -145,7 +175,7 @@ int CmdBase::parser(char *p)
 		{
 			if (!m_NoKeyParam)
 				param = get_next_param(m_cmd, pos);
-			*(string*)pp->pData = param;
+			*(string*)pp->pData = remove_quota(param);
 		}
 
 		if (pp->type == Param::Type::e_bool)
@@ -172,7 +202,7 @@ int CmdBase::parser(char *p)
 	return 0;
 }
 
-int CmdBase::parser_protocal(char *p, size_t &pos)
+int CmdBase::parser_protocol(char *p, size_t &pos)
 {
 	if (p)
 		m_cmd = *p;
@@ -275,7 +305,7 @@ int CmdMap::run_all(const std::string &protocol, CmdCtx *p, bool dry_run)
 	return at(protocol)->run_all(p, dry_run);
 }
 
-string get_next_param(const string &cmd, size_t &pos, char sperate)
+string get_next_param(const string &cmd, size_t &pos, char separate)
 {
 	string str;
 	if (pos == string::npos)
@@ -284,18 +314,18 @@ string get_next_param(const string &cmd, size_t &pos, char sperate)
 		return str;
 
 	//trim left space
-	while (cmd[pos] == sperate && pos < cmd.size())
+	while (cmd[pos] == separate && pos < cmd.size())
 		pos++;
 
-	bool quate = false;
+	bool quote = false;
 	size_t end = string::npos;
 
 	for (size_t s = pos; s < cmd.size(); s++)
 	{
 		if (cmd[s] == '"')
-			quate = !quate;
+			quote = !quote;
 
-		if (!quate && cmd[s] == sperate)
+		if (!quote && cmd[s] == separate)
 		{
 			end = s;
 			break;
@@ -367,19 +397,19 @@ T str_to_uint(const std::string &str, bool * conversion_succeeded)
 	return MAX_VAL;
 }
 
-uint16_t str_to_uint16(const string &str, bool * conversion_suceeded)
+uint16_t str_to_uint16(const string &str, bool * conversion_succeeded)
 {
-	return str_to_uint<uint16_t, UINT16_MAX>(str, conversion_suceeded);
+	return str_to_uint<uint16_t, UINT16_MAX>(str, conversion_succeeded);
 }
 
-uint32_t str_to_uint32(const string &str, bool * conversion_suceeded)
+uint32_t str_to_uint32(const string &str, bool * conversion_succeeded)
 {
-	return str_to_uint<uint32_t, UINT32_MAX>(str, conversion_suceeded);
+	return str_to_uint<uint32_t, UINT32_MAX>(str, conversion_succeeded);
 }
 
-uint64_t str_to_uint64(const string &str, bool * conversion_suceeded)
+uint64_t str_to_uint64(const string &str, bool * conversion_succeeded)
 {
-	return str_to_uint<uint64_t, UINT64_MAX>(str, conversion_suceeded);
+	return str_to_uint<uint64_t, UINT64_MAX>(str, conversion_succeeded);
 }
 
 template <class T> shared_ptr<CmdBase> new_cmd_obj(char *p)
@@ -414,6 +444,10 @@ CmdObjCreateMap::CmdObjCreateMap()
 	(*this)["FASTBOOT:GETVAR"] = new_cmd_obj<FBGetVar>;
 	(*this)["FB:UCMD"] = new_cmd_obj<FBUCmd>;
 	(*this)["FASTBOOT:UCMD"] = new_cmd_obj<FBUCmd>;
+	(*this)["FB:CRC"] = new_cmd_obj<FBCRC>;
+	(*this)["FASTBOOT:CRC"] = new_cmd_obj<FBCRC>;
+	(*this)["FB:WRITE"] = new_cmd_obj<FBWrite>;
+	(*this)["FASTBOOT:WRITE"] = new_cmd_obj<FBWrite>;
 	(*this)["FB:ACMD"] = new_cmd_obj<FBACmd>;
 	(*this)["FASTBOOT:ACMD"] = new_cmd_obj<FBACmd>;
 	(*this)["FB:DOWNLOAD"] = new_cmd_obj<FBDownload>;
@@ -432,6 +466,8 @@ CmdObjCreateMap::CmdObjCreateMap()
 	(*this)["FASTBOOT:FLASHING"] = new_cmd_obj<FBFlashingCmd>;
 	(*this)["FB:SET_ACTIVE"] = new_cmd_obj<FBSetActiveCmd>;
 	(*this)["FASTBOOT:SET_ACTIVE"] = new_cmd_obj<FBSetActiveCmd>;
+	(*this)["FB:BOOT"] = new_cmd_obj<FBBootCmd>;
+	(*this)["FASTBOOT:BOOT"] = new_cmd_obj<FBBootCmd>;
 	(*this)["FB:CONTINUE"] = new_cmd_obj<FBContinueCmd>;
 	(*this)["FASTBOOT:CONTINUE"] = new_cmd_obj<FBContinueCmd>;
 
@@ -604,7 +640,7 @@ int CmdError::parser(char *p)
 	size_t pos = 0;
 	string s;
 
-	if (parser_protocal(p, pos))
+	if (parser_protocol(p, pos))
 		return -1;
 
 	s = get_next_param(m_cmd, pos);
@@ -614,7 +650,7 @@ int CmdError::parser(char *p)
 	return 0;
 }
 
-int CmdError::run(CmdCtx *pCtx)
+int CmdError::run(CmdCtx * /*pCtx*/)
 {
 	set_last_err_string(m_error);
 	return -1;
@@ -628,10 +664,10 @@ int CmdShell::parser(char * p)
 	size_t pos = 0;
 	string s;
 
-	if (parser_protocal(p, pos))
+	if (parser_protocol(p, pos))
 		return -1;
 
-	m_protocal = m_cmd.substr(0, pos);
+	m_protocol = m_cmd.substr(0, pos);
 
 	s = get_next_param(m_cmd, pos);
 
@@ -666,7 +702,7 @@ int CmdShell::run(CmdCtx*pCtx)
 		if (m_dyn)
 		{
 			string cmd;
-			cmd = m_protocal;
+			cmd = m_protocol;
 			str.resize(strlen(str.c_str()));
 			cmd += ' ';
 			cmd += str;
@@ -711,7 +747,7 @@ int CmdEnv::parser(char *p)
 
 	size_t pos = 0;
 
-	if (parser_protocal(p, pos))
+	if (parser_protocol(p, pos))
 		return -1;
 	if (pos == string::npos || pos >= m_cmd.size())
 		return -1;
@@ -736,12 +772,16 @@ int CmdEnv::parser(char *p)
 				auto ptr = getenv(key.c_str());
 				if (ptr)
 					return {true, ptr};
-				return {false, {}};
+				return {true, "\0"};
 #else
 				size_t len;
 				getenv_s(&len, nullptr, 0, key.c_str());
-				if (!len)
-					return {false, {}};
+				if (!len){
+					/* To have the same behavior as Linux when uuu is provided with variables in the way : -e var=
+					 * We return null char as windows cannot store empty environment variables
+					 */
+					return {true, "\0"};
+				}
 				string value(len-1, '\0');
 				getenv_s(&len, &value[0], len, key.c_str());
 				return {true, value};
@@ -759,7 +799,9 @@ int CmdEnv::parser(char *p)
 			last_pos = i.second;
 		}
 	}
-	m_unfold_cmd.append(&*last_pos);
+
+	if(last_pos != cmd.end())
+		m_unfold_cmd.append(&*last_pos);
 
 	return 0;
 }
@@ -773,10 +815,10 @@ int CmdIf::parser(char *p)
 
 	size_t pos = 0;
 
-	if (parser_protocal(p, pos))
+	if (parser_protocol(p, pos))
 		return -1;
 
-	m_protocal = m_cmd.substr(0, pos);
+	m_protocol = m_cmd.substr(0, pos);
 
 	if (pos == string::npos || pos >= m_cmd.size())
 		return -1;
@@ -792,7 +834,7 @@ int CmdIf::parser(char *p)
 	size_t lc = pos;
 	get_next_param(m_cmd, pos);
 
-	int end = m_cmd.find("then", pos);
+	size_t end = m_cmd.find("then", pos);
 
 	if (end == string::npos)
 	{
@@ -800,7 +842,7 @@ int CmdIf::parser(char *p)
 		return -1;
 	}
 
-	m_condtion = m_cmd.substr(lc, end - lc);
+	m_condition = m_cmd.substr(lc, end - lc);
 	m_true_cmd = m_cmd.substr(end + 4);
 	return 0;
 }
@@ -810,15 +852,15 @@ void CmdIf::build_map(CmdCtx*p)
 	string_ex s;
 
 	s.format("0x%04X", p->m_config_item->m_vid);
-	m_key_map["@VID@"] = s;
+	insert_env_variable("@VID@", s);
 
 	s.format("0x%04X", p->m_config_item->m_pid);
-	m_key_map["@PID@"] = s;
+	insert_env_variable("@PID@", s);
 
 	s.format("0x%04X", p->m_current_bcd);
-	m_key_map["@BCD@"] = s;
+	insert_env_variable("@BCD@", s);
 
-	m_key_map["@CHIP@"] = p->m_config_item->m_chip;
+	insert_env_variable("@CHIP@", p->m_config_item->m_chip);
 
 }
 
@@ -829,11 +871,11 @@ int CmdIf::run(CmdCtx *p)
 	int i = 0;
 	for (i = 0; !cmp[i].empty(); i++)
 	{
-		size_t pos = m_condtion.find(cmp[i], 0);
+		size_t pos = m_condition.find(cmp[i], 0);
 		if (pos != string::npos)
 		{
-			l = m_condtion.substr(0, pos);
-			r = m_condtion.substr(pos + cmp[i].size() + 1);
+			l = m_condition.substr(0, pos);
+			r = m_condition.substr(pos + cmp[i].size() + 1);
 			break;
 		}
 	}
@@ -842,11 +884,11 @@ int CmdIf::run(CmdCtx *p)
 
 	build_map(p);
 
-	if (m_key_map.find(l) != m_key_map.end())
-		l = m_key_map[l];
+	if (is_env_exist(l))
+		l = get_env_variable(l);
 
-	if (m_key_map.find(r) != m_key_map.end())
-		r = m_key_map[r];
+	if (is_env_exist(r))
+		r = get_env_variable(r);
 
 	switch (i)
 	{
@@ -864,7 +906,7 @@ int CmdIf::run(CmdCtx *p)
 	}
 
 	//Pass condition check;
-	string cmd = m_protocal;
+	string cmd = m_protocol;
 	cmd += ' ';
 	cmd += this->m_true_cmd;
 	return run_cmd(p, cmd.c_str(), 0);
@@ -875,14 +917,18 @@ int CmdEnv::run(CmdCtx *p)
 	return run_cmd(p, m_unfold_cmd.c_str(), 0);
 }
 
-int run_cmds(const char *procotal, CmdCtx *p)
+int run_cmds(const char *protocol, CmdCtx *p)
 {
 	CmdMap cmdmap, *pCmdMap;
 
 	if (!g_cmd_list_file.empty())
 	{
-		shared_ptr<FileBuffer> pbuff = get_file_buffer(g_cmd_list_file);
-		if (pbuff == nullptr)
+		shared_ptr<FileBuffer> pin = get_file_buffer(g_cmd_list_file);
+		if (pin == nullptr)
+			return -1;
+
+		shared_ptr<DataBuffer> pbuff = pin->request_data(0, UINT64_MAX);
+		if (!pbuff)
 			return -1;
 		if(parser_cmd_list_file(pbuff, &cmdmap))
 			return -1;
@@ -893,12 +939,12 @@ int run_cmds(const char *procotal, CmdCtx *p)
 		pCmdMap = &g_cmd_map;
 	}
 
-	if (pCmdMap->find(procotal) == pCmdMap->end())
+	if (pCmdMap->find(protocol) == pCmdMap->end())
 	{
 		return 0;
 	}
 
-	return (*pCmdMap)[procotal]->run_all(p);
+	return (*pCmdMap)[protocol]->run_all(p);
 }
 
 static int insert_one_cmd(const char * cmd, CmdMap *pCmdMap)
@@ -1008,14 +1054,14 @@ int check_version(string str)
 	return 0;
 }
 
-int uuu_run_cmd_script(const char * buff, int dry)
+int uuu_run_cmd_script(const char * buff, int /*dry*/)
 {
-	shared_ptr<FileBuffer> p(new FileBuffer((void*)buff, strlen(buff)));
+	shared_ptr<DataBuffer> p(new DataBuffer((void*)buff, strlen(buff)));
 	
 	return parser_cmd_list_file(p);
 }
 
-int parser_cmd_list_file(shared_ptr<FileBuffer> pbuff, CmdMap *pCmdMap)
+int parser_cmd_list_file(shared_ptr<DataBuffer> pbuff, CmdMap *pCmdMap)
 {
 	char uuu_version[] = "uuu_version";
 	string str;
@@ -1084,7 +1130,10 @@ int uuu_auto_detect_file(const char *filename)
 	}
 
 	string str= "uuu_version";
-	void *p1 = buffer->data();
+	shared_ptr<DataBuffer> pData = buffer->request_data(0, UINT_MAX);
+	if (!pData)
+		return -1;
+	void *p1 = pData->data();
 	void *p2 = (void*)str.data();
 	if (memcmp(p1, p2, str.size()) == 0)
 	{
@@ -1094,7 +1143,7 @@ int uuu_auto_detect_file(const char *filename)
 
 		g_cmd_list_file = fn.substr(pos+1);
 
-		return parser_cmd_list_file(buffer);
+		return parser_cmd_list_file(pData);
 	}
 
 	//flash.bin or uboot.bin
@@ -1132,6 +1181,7 @@ int uuu_wait_uuu_finish(int deamon, int dry)
 	if(polling_usb(exit))
 		return -1;
 
+	clean_up_filemap();
 	return 0;
 }
 

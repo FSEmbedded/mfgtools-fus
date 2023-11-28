@@ -101,16 +101,16 @@ parts:
       #- cmake
       - g++
       - libbz2-dev
+      - libzstd-dev
       - libusb-1.0-0-dev
       - libssl-dev
-      - libzip-dev
+      - zlib1g-dev
       - pkg-config
     plugin: cmake
     stage-packages:
       - libbz2-1.0
       - libusb-1.0-0
       - libssl1.0.0
-      - libzip4
     filesets:
       docs-copyright:
       - usr/share/doc/*/copyright

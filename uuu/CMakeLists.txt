@@ -6,8 +6,8 @@ set(CMAKE_SKIP_RPATH ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0>=1.0.16)
-pkg_check_modules(LIBZIP REQUIRED libzip)
 pkg_check_modules(LIBZ REQUIRED zlib)
+pkg_check_modules(LIBZSTD REQUIRED libzstd)
 find_package(Threads)
 
 if (STATIC)
@@ -28,13 +28,15 @@ set(LSTS
 	emmc_burn_all.lst
 	fat_write.lst
 	qspi_burn_loader.lst
+	fspinand_burn_loader.lst
 	sd_burn_loader.lst
 	spl_boot.lst
 	sd_burn_all.lst
 	nand_burn_loader.lst
+	nvme_burn_all.lst
 )
 
-link_directories(${CMAKE_CURRENT_SOURCE_DIR}/libuuu ${LIBUSB_LIBRARY_DIRS} ${LIBZIP_LIBRARY_DIRS} ${LIBZ_LIBRARY_DIRS})
+link_directories(${CMAKE_CURRENT_SOURCE_DIR}/libuuu ${LIBUSB_LIBRARY_DIRS} ${LIBZSTD_LIBRARY_DIRS} ${LIBZ_LIBRARY_DIRS})
 
 set(CLIST_EXECUTABLE ${CMAKE_CURRENT_SOURCE_DIR}/gen_txt_include.sh)
 set(generated_files_dir "${CMAKE_BINARY_DIR}/uuu/gen")
@@ -70,7 +72,7 @@ set(SOURCES
 )
 
 add_executable(uuu ${SOURCES})
-target_link_libraries(uuu uuc_s ${OPENSSL_LIBRARIES} ${LIBUSB_LIBRARIES} ${LIBZIP_LIBRARIES} ${LIBZ_LIBRARIES} dl bz2)
+target_link_libraries(uuu uuc_s ${OPENSSL_LIBRARIES} ${LIBUSB_LIBRARIES} ${LIBZ_LIBRARIES} ${LIBZSTD_LIBRARIES}  dl bz2)
 
 install(TARGETS uuu DESTINATION bin)
 target_compile_definitions(uuu

@@ -74,7 +74,7 @@ protected:
 class HIDTrans : public USBTrans
 {
 public:
-	HIDTrans(int read_timeout = 1000) : m_read_timeout{read_timeout} {}
+	HIDTrans(int timeout = 1000) : m_timeout{timeout} {}
 	~HIDTrans() override { if (m_devhandle) close();  m_devhandle = nullptr; }
 
 	int open(void *p) override;
@@ -84,14 +84,14 @@ public:
 
 private:
 	int m_outEP = 0;
-	const int m_read_timeout = 1000;
+	const int m_timeout = 1000;
 	int m_set_report = 9;
 };
 
 class BulkTrans : public USBTrans
 {
 public:
-	BulkTrans(uint64_t timeout = 2000) : m_timeout{timeout} {}
+	BulkTrans(int timeout = 2000) : m_timeout{timeout} {}
 	~BulkTrans() override { if (m_devhandle) close();  m_devhandle = nullptr; }
 
 	int open(void *p) override;
@@ -103,7 +103,7 @@ private:
 	int m_b_send_zero = 0;
 	EPInfo m_ep_in;
 	EPInfo m_ep_out;
-	uint64_t m_timeout = 2000;
+	int m_timeout = 2000;
 };
 
 int polling_usb(std::atomic<int>& bexit);

@@ -33,6 +33,7 @@
 #include "libuuu.h"
 #include "liberror.h"
 #include "libusb.h"
+#include "zip.h"
 
 extern "C"
 {
@@ -121,6 +122,7 @@ int HIDTrans::write(void *buff, size_t size)
 	int ret;
 	uint8_t *p = (uint8_t *)buff;
 	int actual_size;
+
 	if (m_outEP)
 	{
 		ret = libusb_interrupt_transfer(
@@ -129,7 +131,7 @@ int HIDTrans::write(void *buff, size_t size)
 			p,
 			size,
 			&actual_size,
-			1000
+			m_timeout
 		);
 	}
 	else
@@ -142,7 +144,7 @@ int HIDTrans::write(void *buff, size_t size)
 			0,
 			p,
 			size,
-			1000
+			m_timeout
 		);
 	}
 
@@ -168,7 +170,7 @@ int HIDTrans::read(void *buff, size_t size, size_t *rsize)
 		(uint8_t*)buff,
 		size,
 		&actual,
-		m_read_timeout
+		m_timeout
 	);
 
 	*rsize = actual;
@@ -188,8 +190,8 @@ int HIDTrans::read(void *buff, size_t size, size_t *rsize)
 
 int BulkTrans::write(void *buff, size_t size)
 {
-	int ret;
-	int actual_lenght;
+	int ret = 0;
+	int actual_length;
 	for (size_t i = 0; i < size; i += m_MaxTransPreRequest)
 	{
 		uint8_t *p = (uint8_t *)buff;
@@ -204,7 +206,7 @@ int BulkTrans::write(void *buff, size_t size)
 			m_ep_out.addr,
 			p,
 			sz,
-			&actual_lenght,
+			&actual_length,
 			m_timeout
 		);
 
@@ -227,7 +229,7 @@ int BulkTrans::write(void *buff, size_t size)
 			m_ep_out.addr,
 			nullptr,
 			0,
-			&actual_lenght,
+			&actual_length,
 			2000
 		);
 
@@ -265,7 +267,7 @@ int BulkTrans::open(void *p)
 int BulkTrans::read(void *buff, size_t size, size_t *rsize)
 {
 	int ret;
-	int actual_lenght;
+	int actual_length;
 	uint8_t *p = (uint8_t *)buff;
 
 	if (size == 0)
@@ -279,11 +281,11 @@ int BulkTrans::read(void *buff, size_t size, size_t *rsize)
 		m_ep_in.addr,
 		p,
 		size,
-		&actual_lenght,
+		&actual_length,
 		m_timeout
 	);
 
-	*rsize = actual_lenght;
+	*rsize = actual_length;
 
 	if (ret < 0)
 	{

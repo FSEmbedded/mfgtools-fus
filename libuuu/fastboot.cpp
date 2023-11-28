@@ -1,5 +1,5 @@
 /*
-* Copyright 2018 NXP.
+* Copyright 2018, 2022 NXP.
 *
 * Redistribution and use in source and binary forms, with or without modification,
 * are permitted provided that the following conditions are met:
@@ -49,6 +49,8 @@
 #include "trans.h"
 #include <iterator>
 #include "rominfo.h"
+#include "zlib.h"
+#include "libusb.h"
 
 int FastBoot::Transport(string cmd, void *p, size_t size, vector<uint8_t> *input)
 {
@@ -72,11 +74,18 @@ int FastBoot::Transport(string cmd, void *p, size_t size, vector<uint8_t> *input
 
 			if (input)
 			{
+				size_t rz, rsize = 0;
+
 				input->resize(sz);
-				size_t rz;
-				if (m_pTrans->read(input->data(), sz, &rz))
-					return -1;
-				input->resize(rz);
+				while (rsize < sz)
+				{
+					if (m_pTrans->read(input->data() + rsize, sz - rsize, &rz))
+					{
+						set_last_err_string("Error on DATA read!");
+						return -1;
+					}
+					rsize += rz;
+				}
 			}
 			else
 			{
@@ -142,6 +151,11 @@ int FBGetVar::run(CmdCtx *ctx)
 		return -1;
 
 	m_val = fb.m_info;
+
+	string key = "@";
+	key += str_to_upper(m_var);
+	key += "@";
+	insert_env_variable(key, str_to_upper(fb.m_info));
 	return 0;
 }
 
@@ -152,8 +166,8 @@ int FBCmd::parser(char *p)
 
 	size_t pos = 0;
 	string s;
-	
-	if (parser_protocal(p, pos))
+
+	if (parser_protocol(p, pos))
 		return -1;
 	
 	s = get_next_param(m_cmd, pos);
@@ -235,10 +249,13 @@ int FBDownload::run(CmdCtx *ctx)
 	if (buff == nullptr)
 		return -1;
 
+	shared_ptr<DataBuffer> pdata = buff->request_data(0, UINT64_MAX);
+	if (!pdata)
+		return -1;
 	string_ex cmd;
-	cmd.format("download:%08x", buff->size());
+	cmd.format("download:%08x", pdata->size());
 
-	if (fb.Transport(cmd, buff->data(), buff->size()))
+	if (fb.Transport(cmd, pdata->data(), pdata->size()))
 		return -1;
 
 	return 0;
@@ -253,13 +270,16 @@ int FBUpload::run(CmdCtx* ctx)
 	FastBoot fb(&dev);
 	
 	string_ex cmd;
-	cmd.format("upload");
+	if (m_var.length())
+		cmd.format("upload:%s", m_var.c_str());
+	else
+		cmd.format("upload");
 
 	std::vector<uint8_t> buff;
 	if (fb.Transport(cmd, nullptr, buff.size(), &buff))
 		return -1;
 
-	std::ofstream fout(m_filename, ios::out | ios::trunc);
+	std::ofstream fout(m_filename, ios::out | ios::trunc | ios::binary);
 	std::copy(buff.begin(), buff.end(), std::ostream_iterator<uint8_t>(fout));
 	fout.flush();
 	fout.close();
@@ -342,12 +362,14 @@ int FBCopy::run(CmdCtx *ctx)
 	if(m_bDownload)
 	{
 		size_t i;
-		shared_ptr<FileBuffer> buff = get_file_buffer(m_local_file);
-		if (buff == nullptr)
+		shared_ptr<FileBuffer> pin = get_file_buffer(m_local_file);
+		if (pin == nullptr)
 		{
 			return -1;
 		}
-
+		shared_ptr<DataBuffer> buff = pin->request_data(0, UINT64_MAX);
+		if (!buff)
+			return -1;
 		cmd.format("WOpen:%s", m_target_file.c_str());
 		if (fb.Transport(cmd, nullptr, 0))
 		{
@@ -504,6 +526,18 @@ int FBFlashCmd::parser(char *p)
 		m_partition = get_next_param(subcmd, pos);
 	}
 
+	if (m_partition == "-scanlimited")
+	{
+		m_partition = get_next_param(subcmd, pos);
+		bool conversion_success = false;
+		m_scan_limited = str_to_uint64(m_partition, &conversion_success);
+		if (!conversion_success)
+		{
+			set_last_err_string("FB: flash failed to parse size argument given to -scanlimited: "s + m_partition);
+			return -1;
+		}
+		m_partition = get_next_param(subcmd, pos);
+	}
 	if (pos == string::npos || m_partition.empty())
 	{
 		set_last_err_string("Missed partition name");
@@ -649,6 +683,9 @@ int FBFlashCmd::run(CmdCtx *ctx)
 
 		shared_ptr<FileBuffer> pdata = get_file_buffer(m_filename, true);
 
+		if (pdata == nullptr)
+			return -1;
+
 		if (isffu(pdata))
 		{
 			string str;
@@ -669,12 +706,15 @@ int FBFlashCmd::run(CmdCtx *ctx)
 		return flash_raw2sparse(&fb, pdata, block_size, max);
 	}
 
-	shared_ptr<FileBuffer> pdata = get_file_buffer(m_filename, true);
-	if (pdata == nullptr)
+	shared_ptr<FileBuffer> pin = get_file_buffer(m_filename, true);
+	if (pin == nullptr)
 		return -1;
 
-	pdata->request_data(sizeof(sparse_header));
-	if (SparseFile::is_validate_sparse_file(pdata->data(), sizeof(sparse_header)))
+	shared_ptr<DataBuffer> pb = pin->request_data(0, sizeof(sparse_header));
+	if (!pb)
+		return -1;
+
+	if (SparseFile::is_validate_sparse_file(pb->data(), sizeof(sparse_header)))
 	{	/* Limited max size to 16M for sparse file to avoid long timeout at read status*/
 		if (max > m_sparse_limit)
 			max = m_sparse_limit;
@@ -682,40 +722,46 @@ int FBFlashCmd::run(CmdCtx *ctx)
 
 	if (m_scanterm)
 	{
-		pdata->request_data(WIC_BOOTPART_SIZE);
+		pb = pin->request_data(0, m_scan_limited);
+		if (!pb)
+			return -1;
 		size_t length,pos=0;
-		if (IsMBR(pdata))
+		if (IsMBR(pb))
 		{
-			length = ScanTerm(pdata, pos);
+			length = ScanTerm(pb, pos);
 			if (length == 0)
 			{
 				set_last_err_string("This wic have NOT terminate tag after bootloader, please use new yocto");
 				return -1;
 			}
-			size_t offset = pos - length;
+			ssize_t offset = pos - length;
 			if (offset < 0)
 			{
 				set_last_err_string("This wic boot length is wrong");
 				return -1;
 			}
-			return flash(&fb, pdata->data() + offset, length);
+			return flash(&fb, pb->data() + offset, length);
 		}
 	}
 
-	if (pdata->size() <= max)
+	if (pin->size() <= max)
 	{
-		pdata->request_data(pdata->size());
+		pb = pin->request_data(0, pin->size());
+		if (!pb)
+			return -1;
 
-		if (flash(&fb, pdata->data(), pdata->size()))
+		if (flash(&fb, pb->data(), pb->size()))
 			return -1;
 	}
 	else
 	{
 		size_t pos = 0;
-		pdata->request_data(sizeof(sparse_header));
-		sparse_header * pfile = (sparse_header *)pdata->data();
+		pb = pin->request_data(0, sizeof(sparse_header));
+		if (!pb)
+			return -1;
+		sparse_header * pfile = (sparse_header *)pb->data();
 
-		if (!SparseFile::is_validate_sparse_file(pdata->data(), sizeof(sparse_header)))
+		if (!SparseFile::is_validate_sparse_file(pb->data(), sizeof(sparse_header)))
 		{
 			set_last_err_string("Sparse file magic miss matched");
 			return -1;
@@ -732,13 +778,20 @@ int FBFlashCmd::run(CmdCtx *ctx)
 
 		sf.init_header(pfile->blk_sz, max / pfile->blk_sz);
 		startblock = 0;
+		pos = pfile->file_hdr_sz;
 
-		for(size_t nblk=0; nblk < pfile->total_chunks && pos <= pdata->size(); nblk++)
+		for(size_t nblk=0; nblk < pfile->total_chunks && pos <= pin->size(); nblk++)
 		{
-			pdata->request_data(pos+sizeof(chunk_header_t)+sizeof(sparse_header));
+			pb = pin->request_data(pos, sizeof(chunk_header_t));
+			if (!pb)
+				return -1;
+			pheader = (chunk_header_t*)pb->data();
 			size_t oldpos = pos;
-			pheader = SparseFile::get_next_chunk(pdata->data(), pos);
-			pdata->request_data(pos);
+			pos += pheader->total_sz;
+			pb = pin->request_data(oldpos, pos - oldpos);
+			if (!pb)
+				return -1;
+			pheader = (chunk_header_t*)pb->data();
 
 			size_t sz = sf.push_one_chuck(pheader, pheader + 1);
 			if (sz == pheader->total_sz - sizeof(chunk_header_t))
@@ -775,7 +828,7 @@ int FBFlashCmd::run(CmdCtx *ctx)
 			}
 			else
 			{
-				size_t off = ((uint8_t*)pheader) - pdata->data() + sz + sizeof(chunk_header_t);
+				size_t off = sz + sizeof(chunk_header_t);
 				startblock += sz / pfile->blk_sz;
 
 				do
@@ -793,7 +846,7 @@ int FBFlashCmd::run(CmdCtx *ctx)
 
 					sz = sf.push_one_chuck(&ct, nullptr);
 
-					sz = sf.push_raw_data(pdata->data() + off, pos - off);
+					sz = sf.push_raw_data(pb->data() + off, pb->size() - off);
 					off += sz;
 					startblock += sz / pfile->blk_sz;
 
@@ -802,7 +855,7 @@ int FBFlashCmd::run(CmdCtx *ctx)
 					nt.total = startblock;
 					call_notify(nt);
 
-				} while (off < pos);
+				} while (off + oldpos < pos);
 			}
 		}
 
@@ -820,25 +873,27 @@ int FBFlashCmd::run(CmdCtx *ctx)
 
 bool FBFlashCmd::isffu(shared_ptr<FileBuffer> p)
 {
-	vector<uint8_t> data;
-	data.resize(sizeof(FFU_SECURITY_HEADER));
-	p->request_data(data, 0, sizeof(FFU_SECURITY_HEADER));
+	shared_ptr<DataBuffer> data = p->request_data(0, sizeof(FFU_SECURITY_HEADER));
 
-	FFU_SECURITY_HEADER *h = (FFU_SECURITY_HEADER*)data.data();
+	if (!data)
+		return -1;
+	FFU_SECURITY_HEADER *h = (FFU_SECURITY_HEADER*)data->data();
 	if (strncmp((const char*)h->signature, FFU_SECURITY_SIGNATURE, sizeof(h->signature)) == 0)
 		return true;
 	else
 		return false;
 }
 
-int FBFlashCmd::flash_ffu_oneblk(FastBoot *fb, shared_ptr<FileBuffer> p, size_t off, size_t blksz, size_t blkindex)
+int FBFlashCmd::flash_ffu_oneblk(FastBoot *fb, shared_ptr<FileBuffer> pin, size_t off, size_t blksz, size_t blkindex)
 {
 	SparseFile sf;
 
 	sf.init_header(blksz, 10);
-
-	p->request_data(off + blksz);
 	
+	shared_ptr<DataBuffer> p;
+	p = pin->request_data(off, blksz);
+	if (!p)
+		return -1;
 	chunk_header_t ct;
 	ct.chunk_type = CHUNK_TYPE_DONT_CARE;
 	ct.chunk_sz = blkindex;
@@ -847,15 +902,17 @@ int FBFlashCmd::flash_ffu_oneblk(FastBoot *fb, shared_ptr<FileBuffer> p, size_t 
 
 	sf.push_one_chuck(&ct, nullptr);
 
-	if (sf.push_one_block(p->data() + off))
+	if (sf.push_one_block(p->data()))
 		return -1;
 
 	return flash(fb, sf.m_data.data(), sf.m_data.size());
 }
 
-int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
+int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> pin)
 {
-	p->request_data(sizeof(FFU_SECURITY_HEADER));
+	shared_ptr<DataBuffer> p = pin->request_data(0, sizeof(FFU_SECURITY_HEADER));
+	if (!p)
+		return -1;
 	FFU_SECURITY_HEADER *h = (FFU_SECURITY_HEADER*)p->data();
 	if (strncmp((const char*)h->signature, FFU_SECURITY_SIGNATURE, sizeof(h->signature)) != 0)
 	{
@@ -867,7 +924,10 @@ int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
 	off = h->dwCatalogSize + h->dwHashTableSize;
 	off = round_up(off, (size_t)h->dwChunkSizeInKb * 1024);
 
-	p->request_data(off + sizeof(FFU_IMAGE_HEADER));
+	p = pin->request_data(0, off + sizeof(FFU_IMAGE_HEADER));
+	if (!p)
+		return -1;
+
 	FFU_IMAGE_HEADER *pIh = (FFU_IMAGE_HEADER *)(p->data() + off);
 
 	if (strncmp((const char*)pIh->Signature, FFU_SIGNATURE, sizeof(pIh->Signature)) != 0)
@@ -879,7 +939,8 @@ int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
 	off += pIh->ManifestLength + pIh->cbSize;
 	off = round_up(off, (size_t)h->dwChunkSizeInKb * 1024);
 
-	p->request_data(off + sizeof(FFU_STORE_HEADER));
+	p = pin->request_data(0, off + sizeof(FFU_STORE_HEADER));
+	if (!p) return -1;
 	FFU_STORE_HEADER *pIs = (FFU_STORE_HEADER*) (p->data() + off);
 
 	if(pIs->MajorVersion == 1)
@@ -887,8 +948,8 @@ int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
 	else
 		off += pIs->dwValidateDescriptorLength + sizeof(FFU_STORE_HEADER);
 
-	p->request_data(off + pIs->dwWriteDescriptorLength);
-
+	p = pin->request_data(0, off + pIs->dwWriteDescriptorLength);
+	if (!p) return -1;
 	size_t block_off = off + pIs->dwWriteDescriptorLength;
 	block_off = round_up(block_off, (size_t)h->dwChunkSizeInKb * 1024);
 
@@ -897,15 +958,15 @@ int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
 	nt.total = pIs->dwWriteDescriptorCount;
 	call_notify(nt);
 
-	size_t currrent_block = 0;
+	size_t current_block = 0;
 	size_t i;
 	for (i = 0; i < pIs->dwWriteDescriptorCount; i++)
 	{
 		FFU_BLOCK_DATA_ENTRY *entry = (FFU_BLOCK_DATA_ENTRY*)(p->data() + off);
-		
+
 		off += sizeof(FFU_BLOCK_DATA_ENTRY) + (entry->dwLocationCount -1) * sizeof(_DISK_LOCATION);
 
-		if (currrent_block >= pIs->dwInitialTableIndex && currrent_block < pIs->dwInitialTableIndex + pIs->dwInitialTableCount)
+		if (current_block >= pIs->dwInitialTableIndex && current_block < pIs->dwInitialTableIndex + pIs->dwInitialTableCount)
 		{
 			//Skip Init Block
 		}
@@ -913,8 +974,7 @@ int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
 		{
 			for (uint32_t loc = 0; loc < entry->dwLocationCount; loc++)
 			{
-				//printf("block 0x%x write to 0x%x seek %d\n", currrent_block, entry->rgDiskLocations[loc].dwBlockIndex, entry->rgDiskLocations[loc].dwDiskAccessMethod);
-				uint32_t access = entry->rgDiskLocations[loc].dwDiskAccessMethod;
+				//printf("block 0x%x write to 0x%x seek %d\n", current_block, entry->rgDiskLocations[loc].dwBlockIndex, entry->rgDiskLocations[loc].dwDiskAccessMethod);
 				uint32_t blockindex;
 				if (entry->rgDiskLocations[loc].dwDiskAccessMethod == DISK_BEGIN)
 					blockindex = entry->rgDiskLocations[loc].dwBlockIndex;
@@ -924,8 +984,8 @@ int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
 				for (uint32_t blk = 0; blk < entry->dwBlockCount; blk++)
 				{
 					if (flash_ffu_oneblk(fb,
-							p,
-							block_off + (currrent_block + blk) * pIs->dwBlockSizeInBytes,
+							pin,
+							block_off + (current_block + blk) * pIs->dwBlockSizeInBytes,
 							pIs->dwBlockSizeInBytes,
 							blockindex + blk))
 						return -1;
@@ -937,12 +997,149 @@ int FBFlashCmd::flash_ffu(FastBoot *fb, shared_ptr<FileBuffer> p)
 		nt.total = i;
 		call_notify(nt);
 
-		currrent_block += entry->dwBlockCount;
+		current_block += entry->dwBlockCount;
 	}
 
 	nt.type = uuu_notify::NOTIFY_TRANS_POS;
 	nt.total = i;
 	call_notify(nt);
+
+	return 0;
+}
+
+FBLoop::FBLoop(char* p): CmdBase(p)
+{
+	insert_param_info("-f", &m_filename, Param::Type::e_string_filename);
+	insert_param_info("-format", &m_uboot_cmd, Param::Type::e_string);
+	insert_param_info("-blksz", &m_blksize, Param::Type::e_uint32);
+	insert_param_info("-each", &m_each, Param::Type::e_uint32);
+	insert_param_info("-seek", &m_seek, Param::Type::e_uint32);
+	insert_param_info("-skip", &m_skip, Param::Type::e_uint32);
+	insert_param_info("-nostop", &m_nostop, Param::Type::e_bool);
+}
+
+string FBLoop::build_cmd(string& cmd, size_t off, size_t sz)
+{
+	string ucmd="UCmd: ";
+	ucmd += cmd;
+
+	string_ex ex;
+	ex.format("0x%llx", off);
+
+	size_t pos= ucmd.find("@off");
+	ucmd = ucmd.replace(pos, 4, ex);
+
+	ex.format("0x%llx", sz);
+	pos = ucmd.find("@size");
+	ucmd = ucmd.replace(pos, 5, ex);
+
+	return ucmd;
+}
+
+int FBLoop::run(CmdCtx* ctx)
+{
+	BulkTrans dev{ m_timeout };
+	if (dev.open(ctx->m_dev))
+		return -1;
+
+	int ret = 0;
+	string_ex err;
+	size_t offset = 0;
+	size_t seek = 0;
+	FastBoot fb(&dev);
+	string_ex cmd;
+	shared_ptr<FileBuffer> p1 = get_file_buffer(m_filename, true);
+	if (p1 == nullptr)
+		return 0;
+
+	shared_ptr<DataBuffer> fbuff;
+
+	bool bload = p1->IsKnownSize();
+	uuu_notify nt;
+	nt.type = uuu_notify::NOTIFY_TRANS_SIZE;
+	if (bload)
+		nt.total = p1->size();
+	else
+		nt.total = 0;
+	call_notify(nt);
+
+	offset = m_skip;
+	seek = m_seek;
+
+	while((fbuff = p1->request_data(offset, m_each)))
+	{
+		ret = this->each(fb, fbuff, seek);
+		offset += fbuff->size();
+		seek += fbuff->size();
+
+		if (!m_nostop && ret)
+			return ret;
+
+		nt.type = uuu_notify::NOTIFY_TRANS_POS;
+		nt.total = offset;
+		call_notify(nt);
+
+		if (bload != p1->IsKnownSize())
+		{
+			nt.type = uuu_notify::NOTIFY_TRANS_SIZE;
+			nt.total = p1->size();
+			call_notify(nt);
+
+			bload = p1->IsKnownSize();
+		}
+	}
+
+	if (!p1->IsKnownSize())
+	{
+		set_last_err_string("Have not get all data");
+		return -1;
+	}
+
+	if (offset != p1->size())
+	{
+		set_last_err_string("some data missed");
+		return -1;
+	}
+
+	nt.type = uuu_notify::NOTIFY_TRANS_POS;
+	nt.total = offset;
+	call_notify(nt);
+	return ret;
+}
+
+int FBCRC::each(FastBoot& fb, std::shared_ptr<DataBuffer> fbuff, size_t off)
+{
+	uint32_t crc = crc32(0, fbuff->data(), fbuff->size());
+
+	string cmd = build_cmd(m_uboot_cmd, off / m_blksize, div_round_up(fbuff->size(), m_blksize));
+
+	if (fb.Transport(cmd, nullptr, 0))
+		return -1;
+
+	string_ex crc_cmd;
+	crc_cmd.format("UCmd: crc32 -v $loadaddr 0x%x %08x", min(m_each, fbuff->size()), crc);
+
+	int ret = fb.Transport(crc_cmd, nullptr, 0);
+	if (ret)
+	{
+		string_ex err;
+		err.format("crc32 check error at 0x%llx", off);
+		set_last_err_string(err);
+	}
+	return ret;
+}
+
+int FBWrite::each(FastBoot& fb, std::shared_ptr<DataBuffer> fbuff, size_t off)
+{
+	string_ex cmd;
+	cmd.format("download:%08x", fbuff->size());
+
+	if (fb.Transport(cmd, fbuff->data(), fbuff->size()))
+		return -1;
+
+	string cmd_w = build_cmd(m_uboot_cmd, off / m_blksize, div_round_up(fbuff->size(), m_blksize));
+	if (fb.Transport(cmd_w, nullptr, 0))
+		return -1;
 
 	return 0;
 }

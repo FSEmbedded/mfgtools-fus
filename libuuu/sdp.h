@@ -106,10 +106,11 @@ protected:
 	HAB_t get_hab_type(HIDReport *report);
 	int get_status(HIDReport *p, uint32_t &status, uint8_t report_id);
 	int init_cmd();
-	IvtHeader * search_ivt_header(std::shared_ptr<FileBuffer> data, size_t &off, size_t limit=ULLONG_MAX);
+	IvtHeader * search_ivt_header(std::shared_ptr<DataBuffer> data, size_t &off, size_t limit=ULLONG_MAX);
 
 	std::string m_filename;
 	SDPCmd m_spdcmd;
+	uint64_t m_scan_limited = UINT64_MAX;
 
 private:
 	int send_cmd(HIDReport *p);
@@ -163,7 +164,7 @@ public:
 	SDPWriteCmd(char*p);
 
 	int run(CmdCtx *p) override;
-	int run(CmdCtx *p, void *buff, size_t size, uint32_t addr);
+	int run(CmdCtx *p, void *buff, size_t size, uint32_t addr, bool validate = true);
 
 private:
 	uint32_t m_download_addr;
@@ -175,6 +176,7 @@ private:
 	bool m_bskipspl = false;
 	bool m_bskipfhdr = false;
 	bool m_bscanterm = false;
+	bool m_barebox_bl33 = false;
 };
 
 class SDPJumpCmd : public SDPCmdBase
@@ -211,7 +213,11 @@ public:
 	int run(CmdCtx *p) override;
 
 private:
+	bool is_barebox_img(void);
+	int load_barebox(CmdCtx *ctx);
+
 	bool m_clear_dcd = false;
 	uint32_t m_dcd_addr = 0;
 	bool m_nojump = false;
+	bool m_barebox = false;
 };

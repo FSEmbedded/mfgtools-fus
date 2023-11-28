@@ -1,5 +1,5 @@
 /*
-* Copyright 2018 NXP.
+* Copyright 2018, 2022 NXP.
 *
 * Redistribution and use in source and binary forms, with or without modification,
 * are permitted provided that the following conditions are met:
@@ -37,6 +37,7 @@
 
 class FBFlashCmd;
 class FileBuffer;
+class DataBuffer;
 class TransBase;
 
 /*
@@ -90,6 +91,45 @@ private:
 	const char m_separator = ':';
 };
 
+class FBLoop : public CmdBase
+{
+public:
+	std::string m_uboot_cmd = "mmc read $loadaddr";
+	size_t m_blksize = 512;
+	size_t m_each = 0x4000000;  //byte address
+	size_t m_seek = 0;			//byte address
+	size_t m_skip = 0;			//byte address
+	bool m_nostop = false;
+
+	std::string m_filename;
+
+	FBLoop(char* p);
+
+	virtual int each(FastBoot& fb, std::shared_ptr<DataBuffer> fbuff, size_t off) = 0;
+	int run(CmdCtx* ctx) override;
+	std::string build_cmd(std::string& cmd, size_t off, size_t sz);
+};
+
+class FBCRC : public FBLoop
+{
+public:
+	int each(FastBoot& fb, std::shared_ptr<DataBuffer> fbuff, size_t off) override;
+	FBCRC(char* p) : FBLoop(p) {
+		m_uboot_cmd = "mmc read $loadaddr @off @size";
+		insert_param_info("CRC", nullptr, Param::Type::e_null);
+	};
+};
+
+class FBWrite : public FBLoop
+{
+public:
+	int each(FastBoot& fb, std::shared_ptr<DataBuffer> fbuff, size_t off) override;
+	FBWrite(char* p) : FBLoop(p) {
+		m_uboot_cmd = "mmc write ${fastboot_buffer} @off @size";
+		insert_param_info("WRITE", nullptr, Param::Type::e_null);
+	};
+};
+
 class FBUCmd : public FBCmd
 {
 public:
@@ -139,6 +179,7 @@ private:
 	size_t m_sparse_limit = 0x1000000;
 	uint64_t m_totalsize;
 	bool m_scanterm = false;
+	uint64_t m_scan_limited = UINT64_MAX;
 };
 
 class FBDelPartition : public FBCmd
@@ -247,6 +288,12 @@ private:
 	std::string m_target_file;
 };
 
+class FBBootCmd : public FBCmd
+{
+public:
+	FBBootCmd(char *p) : FBCmd(p, "boot") {}
+};
+
 class FBContinueCmd : public FBCmd
 {
 public:
@@ -259,11 +306,13 @@ public:
 	FBUpload(char* p) : CmdBase(p)
 	{
 		insert_param_info("upload", nullptr, Param::Type::e_null);
+		insert_param_info("-v", &m_var, Param::Type::e_string);
 		insert_param_info("-f", &m_filename, Param::Type::e_string);
 	}
 
 	int run(CmdCtx* ctx) override;
 
 private:
+	std::string m_var;
 	std::string m_filename;
 };

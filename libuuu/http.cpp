@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 NXP.
+ * Copyright 2019, 2023 NXP.
  *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
@@ -47,13 +47,69 @@
 #include "http.h"
 #include "libuuu.h"
 #include "liberror.h"
+#include "libcomm.h"
 #include <string.h>
 #include <locale>
 #include <codecvt>
 
+uuu_askpasswd g_ask_passwd;
+int uuu_set_askpasswd(uuu_askpasswd ask)
+{
+	g_ask_passwd = ask;
+	return 0;
+}
+
+map<string, pair<string, string>> g_passwd_map;
+
 #ifdef UUUSSL
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+static const char* base64_table =
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyz"
+	"0123456789+/";
+
+static string base64_encode(string str)
+{
+	string ret;
+	for (size_t i = 0; i < str.length(); i += 3)
+	{
+		ret.push_back(base64_table[(str[i] >> 2) & 0x3f]);
+		if (i + 1 < str.length())
+		{
+			int index;
+			index = ((str[i] & 3) << 4)
+				+ ((str[i + 1] >> 4) & 0xf);
+			ret.push_back(base64_table[index]);
+		}
+		else
+		{
+			ret.push_back(base64_table[(str[i] & 0x3) << 4]);
+			ret.push_back('=');
+			ret.push_back('=');
+			return ret;
+		}
+
+		if (i + 2 < str.length())
+		{
+			int index;
+			index = (((str[i + 1]) & 0xF) << 2)
+				+ (((str[i + 2]) >> 6) & 0x3);
+			ret.push_back(base64_table[index]);
+			index = str[i + 2] & 0x3f;
+			ret.push_back(base64_table[index]);
+
+		}
+		else
+		{
+			ret.push_back(base64_table[((str[i + 1]) & 0xF) << 2]);
+			ret.push_back('=');
+			return ret;
+		}
+	}
+	return ret;
+}
 
 class CUUUSSL
 {
@@ -77,12 +133,26 @@ public:
 static CUUUSSL g_uuussl;
 
 #endif
-
-
 using namespace std;
 
 #ifdef _WIN32
 /* Win32 implement*/
+
+DWORD ChooseAuthScheme(DWORD dwSupportedSchemes)
+{
+	if (dwSupportedSchemes & WINHTTP_AUTH_SCHEME_NEGOTIATE)
+		return WINHTTP_AUTH_SCHEME_NEGOTIATE;
+	else if (dwSupportedSchemes & WINHTTP_AUTH_SCHEME_NTLM)
+		return WINHTTP_AUTH_SCHEME_NTLM;
+	else if (dwSupportedSchemes & WINHTTP_AUTH_SCHEME_PASSPORT)
+		return WINHTTP_AUTH_SCHEME_PASSPORT;
+	else if (dwSupportedSchemes & WINHTTP_AUTH_SCHEME_DIGEST)
+		return WINHTTP_AUTH_SCHEME_DIGEST;
+	else if (dwSupportedSchemes & WINHTTP_AUTH_SCHEME_BASIC)
+		return WINHTTP_AUTH_SCHEME_BASIC;
+
+	return 0;
+}
 
 HttpStream::HttpStream()
 {
@@ -133,37 +203,114 @@ int HttpStream::HttpGetHeader(std::string host, std::string path, int port, bool
 		return -1;
 	}
 
-	bResults = WinHttpSendRequest(m_hRequest,
+	DWORD dwProxyAuthScheme = 0;
+	int retry = 3;
+
+	pair<string, string> up = g_passwd_map[host];
+
+	while (1)
+	{
+		DWORD status = 0;
+		DWORD dwSize = sizeof(status);
+
+		bResults = WinHttpSendRequest(m_hRequest,
 			WINHTTP_NO_ADDITIONAL_HEADERS, 0,
 			WINHTTP_NO_REQUEST_DATA, 0,
 			0, 0);
 
-	if (!bResults)
-	{
-		set_last_err_string("Fail WinHttpSendRequest");
-		return -1;
+		// End the request.
+		if (bResults)
+			bResults = WinHttpReceiveResponse(m_hRequest, NULL);
+
+		// Resend the request in case of
+		// ERROR_WINHTTP_RESEND_REQUEST error.
+		if (!bResults && GetLastError() == ERROR_WINHTTP_RESEND_REQUEST)
+			continue;
+
+		// Check the status code.
+		if (bResults)
+			bResults = WinHttpQueryHeaders(m_hRequest,
+				WINHTTP_QUERY_STATUS_CODE |
+				WINHTTP_QUERY_FLAG_NUMBER,
+				NULL,
+				&status,
+				&dwSize,
+				NULL);
+
+		if (bResults)
+		{
+			DWORD dwSupportedSchemes;
+			DWORD dwFirstScheme;
+			DWORD dwSelectedScheme;
+			DWORD dwTarget;
+
+			switch (status)
+			{
+			case HTTP_STATUS_OK: //200
+				g_passwd_map[host] = up;
+				return 0;
+
+			case HTTP_STATUS_DENIED: //401
+				// The server requires authentication.
+				if(g_passwd_map[host].first.empty())
+				{
+					char user[MAX_USER_LEN];
+					char passwd[MAX_USER_LEN];
+					if (g_ask_passwd((char*)host.c_str(), user, passwd))
+						return -1;
+
+					up.first = user;
+					up.second = passwd;
+				}
+				// Obtain the supported and preferred schemes.
+				bResults = WinHttpQueryAuthSchemes(m_hRequest,
+					&dwSupportedSchemes,
+					&dwFirstScheme,
+					&dwTarget);
+
+				// Set the credentials before resending the request.
+				if (bResults)
+				{
+					dwSelectedScheme = ChooseAuthScheme(dwSupportedSchemes);
+
+					std::wstring_convert<std::codecvt_utf8<wchar_t>> convert;
+
+					if (dwSelectedScheme == 0)
+					{
+						set_last_err_string("unsupported http auth");
+						return -1;
+					}
+					else
+						bResults = WinHttpSetCredentials(m_hRequest,
+							dwTarget,
+							dwSelectedScheme,
+							convert.from_bytes(up.first).c_str(),
+							convert.from_bytes(up.second).c_str(),
+							NULL);
+				}
+
+				retry--;
+				if (!retry)
+					return -1;
+
+				break;
+
+			case HTTP_STATUS_PROXY_AUTH_REQ:
+				set_last_err_string("unsupported proxy auth");
+				return -1;
+
+			default:
+				g_passwd_map[host] = up;
+				// The status code does not indicate success.
+				string_ex str;
+				str.format("Error. Status code %d returned.\n", status);
+				set_last_err_string(str);
+				return -1;
+			}
+		}
 	}
 
-	bResults = WinHttpReceiveResponse(m_hRequest, nullptr);
-
-	if (!bResults)
-	{
-		set_last_err_string("Fail WinHttpReceiveResponse");
-		return -1;
-	}
-
-	DWORD status = 0;
-	DWORD dwSize = sizeof(status);
-	WinHttpQueryHeaders(m_hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-		WINHTTP_HEADER_NAME_BY_INDEX, &status,
-		&dwSize, WINHTTP_NO_HEADER_INDEX);
-
-	if (status != HTTP_STATUS_OK)
-	{
-		set_last_err_string("HTTP status is not okay");
-		return -1;
-	}
-	return 0;
+	return -1;
 }
 
 size_t HttpStream::HttpGetFileSize()
@@ -254,6 +401,20 @@ int HttpStream::RecvPacket(char *buff, size_t sz)
 	return recv(m_socket, buff, sz, 0);
 }
 
+class CAutoAddrInfo
+{
+addrinfo *m_p;
+public:
+	CAutoAddrInfo(addrinfo *pAddrInfo)
+	{
+		m_p = pAddrInfo;
+	}
+	~CAutoAddrInfo()
+	{
+		freeaddrinfo(m_p);
+	}
+};
+#include <iostream>
 int HttpStream::HttpGetHeader(std::string host, std::string path, int port, bool ishttps)
 {
 	int ret;
@@ -266,6 +427,8 @@ int HttpStream::HttpGetHeader(std::string host, std::string path, int port, bool
 		set_last_err_string("get network address error");
 		return -1;
 	}
+
+	CAutoAddrInfo A(pAddrInfo);
 
 	m_socket = socket(pAddrInfo->ai_family, pAddrInfo->ai_socktype, pAddrInfo->ai_protocol);
 
@@ -291,7 +454,12 @@ int HttpStream::HttpGetHeader(std::string host, std::string path, int port, bool
 	{
 #ifdef UUUSSL
 
-		const SSL_METHOD *meth = TLSv1_2_client_method();
+		const SSL_METHOD* meth =
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
+		TLSv1_2_client_method();
+#else
+		TLS_client_method();
+#endif
 		if(!meth)
 		{
 			set_last_err_string("Failure at TLSv1_2_client_method\n");
@@ -321,55 +489,88 @@ int HttpStream::HttpGetHeader(std::string host, std::string path, int port, bool
 #endif
         }
 
-	if(ishttps)
-		path = "https://" + host + path;
-
-	string request = "GET " + path + " HTTP/1.1\r\n";
-	request += "Host: " + host + "\r\n\r\n";
-
-	ret = SendPacket((char*)request.c_str(), request.size());
-	if (ret != request.size())
+	int retry = 3;
+	pair<string, string> up = g_passwd_map[host];
+	while(retry--)
 	{
-		set_last_err_string("http send error");
-		return -1;
-	}
+		string userpd = up.first + ":" + up.second;
+		string httppath = path;
 
-	m_buff.resize(1024);
-	ret = RecvPacket((char*)m_buff.data(), m_buff.size());
-	if (ret < 0)
-	{
-		set_last_err_string("http recv Error");
-		return -1;
-	}
+		if(ishttps)
+			httppath = "https://" + host + path;
 
-	int i;
-	for (i = 0; i < 1024 - 4; i++)
-	{
-		if (m_buff[i] == 0xd &&
-			m_buff[i + 1] == 0xa &&
-			m_buff[i + 2] == 0xd &&
-			m_buff[i + 3] == 0xa)
+		string request = "GET " + httppath + " HTTP/1.1\r\n";
+		request += "Host: " + host + "\r\n";
+
+		if (!up.first.empty())
+			request += "Authorization: Basic " + base64_encode(userpd) + "\r\n";
+
+		request += "User-Agent:uuu\r\nAccept: */*\r\n";
+		request += "\r\n";
+
+		ret = SendPacket((char*)request.c_str(), request.size());
+		if ((size_t)(ret) != request.size())
 		{
-			break;
+			set_last_err_string("http send error");
+			return -1;
 		}
+
+		m_buff.resize(1024);
+		ret = RecvPacket((char*)m_buff.data(), m_buff.size());
+		if (ret < 0)
+		{
+			set_last_err_string("http recv Error");
+			return -1;
+		}
+
+		int i;
+		for (i = 0; i < 1024 - 4; i++)
+		{
+			if (m_buff[i] == 0xd &&
+				m_buff[i + 1] == 0xa &&
+				m_buff[i + 2] == 0xd &&
+				m_buff[i + 3] == 0xa)
+			{
+				break;
+			}
+		}
+
+		if (i >= 1024 - 4)
+		{
+			set_last_err_string("Can't find terminate");
+			return -1;
+		}
+
+		m_data_start = i + 4;
+
+		string str;
+		str.resize(i + 2);
+		memcpy((void*)str.c_str(), m_buff.data(), i + 2);
+
+		int ret = parser_response(str);
+		if (ret == ERR_ACCESS_DENIED)
+		{
+			if(g_passwd_map[host].first.empty())
+			{
+				char user[MAX_USER_LEN];
+				char passwd[MAX_USER_LEN];
+				if (g_ask_passwd((char*)host.c_str(), user, passwd))
+					return -1;
+
+				up.first = user;
+				up.second = passwd;
+			}
+			continue;
+		}
+		else if(ret == 0)
+		{
+			g_passwd_map[host] = up;
+			return 0;
+		}
+		g_passwd_map[host] = up;
 	}
 
-	if (i >= 1024 - 4)
-	{
-		set_last_err_string("Can't find termaniate");
-		return -1;
-	}
-
-	m_data_start = i + 4;
-
-	string str;
-	str.resize(i + 2);
-	memcpy((void*)str.c_str(), m_buff.data(), i + 2);
-
-	if (parser_response(str))
-		return -1;
-
-	return 0;
+	return -1;
 }
 
 size_t HttpStream::HttpGetFileSize()
@@ -387,6 +588,9 @@ int HttpStream::parser_response(string rep)
 	}
 
 	string str = rep.substr(0, pos);
+	if (str == "HTTP/1.1 401 Unauthorized")
+		return ERR_ACCESS_DENIED;
+
 	if (str != "HTTP/1.1 200 OK")
 	{
 		set_last_err_string(str);
@@ -415,25 +619,25 @@ int HttpStream::HttpDownload(char *buff, size_t sz)
 	size_t left = 0;
 	if (m_data_start < m_buff.size())
 		left = m_buff.size() - m_data_start;
-	
-	size_t trim_transfered = 0;
+
+	size_t trim_transferred = 0;
 
 	if (left)
 	{
-		
-		trim_transfered = sz;
-		if (trim_transfered > left)
-			trim_transfered = left;
 
-		memcpy(buff, m_buff.data() + m_data_start, trim_transfered);
-		m_data_start += trim_transfered;
+		trim_transferred = sz;
+		if (trim_transferred > left)
+			trim_transferred = left;
+
+		memcpy(buff, m_buff.data() + m_data_start, trim_transferred);
+		m_data_start += trim_transferred;
 	}
 
-	if (trim_transfered < sz)
+	if (trim_transferred < sz)
 	{
 		int ret = 0;
-		sz -= trim_transfered;
-		buff += trim_transfered;
+		sz -= trim_transferred;
+		buff += trim_transferred;
 		while (sz && ((ret = RecvPacket(buff, sz)) > 0))
 		{
 			buff += ret;

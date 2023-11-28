@@ -66,18 +66,72 @@ enum KnownDeviceState {
 };
 static atomic<KnownDeviceState> g_known_device_state{NoKnownDevice};
 
+class CAutoDeInit
+{
+public:
+	CAutoDeInit()
+	{
+		if (libusb_init(nullptr) < 0)
+				throw runtime_error{ "Call libusb_init failure" };
+	}
+	~CAutoDeInit()
+	{
+		libusb_exit(nullptr);
+	}
+} g_autoDeInit;
+
 class CAutoList
 {
-	libusb_device **list = nullptr;
 public:
+	libusb_device **list = nullptr;
+
+	CAutoList(libusb_device **list)
+	{
+		this->list = list;
+		m_rc = -1;
+	}
+
+	CAutoList(CAutoList &&other)
+	{
+		this->list = other.list;
+		this->m_rc = other.m_rc;
+		other.list = nullptr;
+	}
+
 	CAutoList()
 	{
-		libusb_get_device_list(nullptr, &list);
+		m_rc = libusb_get_device_list(nullptr, &list);
+		if (m_rc < 0) {
+			set_last_err_string(std::string("libusb_get_device_list failed: ") +
+							    	libusb_strerror(static_cast<libusb_error>(m_rc)));
+		}
 	}
+
 	~CAutoList()
 	{
-		libusb_free_device_list(list, 1);
+		if (list != nullptr) {
+			libusb_free_device_list(list, 1);
+		}
 	}
+
+	CAutoList& operator=(CAutoList &&other)
+	{
+		this->list = other.list;
+		this->m_rc = other.m_rc;
+		other.list = nullptr;
+		return *this;
+	}
+
+	CAutoList& operator=(const CAutoList&) = delete;	// Prevent copy, allow move only
+	CAutoList(const CAutoList&) = delete;	// Prevent copy, allow move only
+
+	bool good() const
+	{
+		return m_rc >= 0;
+	}
+
+private:
+	int m_rc = 0;
 };
 
 static struct {
@@ -87,7 +141,7 @@ static struct {
 	void push_back(string filter)
 	{
 		lock_guard<mutex> guard{lock};
-		list.emplace_back(move(filter));
+		list.emplace_back(std::move(filter));
 	}
 
 	bool is_valid(const string& path)
@@ -200,7 +254,7 @@ static int open_libusb(libusb_device *dev, void **usb_device_handle)
  Before start thread, need call libusb_ref_device to dev is free
 
  libusb_get_list()
- libusb_ref_devive        // avoid free at libusb_free_list if run_usb_cmd have not open device in time.
+ libusb_ref_device        // avoid free at libusb_free_list if run_usb_cmd have not open device in time.
  thread start run_usb_cmds;
  libusb_free_list()
 */
@@ -208,7 +262,7 @@ static int run_usb_cmds(ConfigItem *item, libusb_device *dev, short bcddevice)
 {
 	int ret;
 	uuu_notify nt;
-	nt.type = uuu_notify::NOFITY_DEV_ATTACH;
+	nt.type = uuu_notify::NOTIFY_DEV_ATTACH;
 
 	string str;
 	str = get_device_path(dev);
@@ -219,7 +273,7 @@ static int run_usb_cmds(ConfigItem *item, libusb_device *dev, short bcddevice)
 	ctx.m_config_item = item;
 	ctx.m_current_bcd = bcddevice;
 
-	if (ret = open_libusb(dev, &(ctx.m_dev)))
+	if ((ret = open_libusb(dev, &(ctx.m_dev))))
 	{
 		nt.type = uuu_notify::NOTIFY_CMD_END;
 		nt.status = -1;
@@ -234,6 +288,7 @@ static int run_usb_cmds(ConfigItem *item, libusb_device *dev, short bcddevice)
 	call_notify(nt);
 
 	libusb_unref_device(dev); //ref_device when start thread
+	clear_env();
 	return ret;
 }
 
@@ -242,7 +297,7 @@ static int usb_add(libusb_device *dev)
 	struct libusb_device_descriptor desc;
 	int r = libusb_get_device_descriptor(dev, &desc);
 	if (r < 0) {
-		set_last_err_string("failure get device descrior");
+		set_last_err_string("failure get device descriptor");
 		return r;
 	}
 
@@ -252,7 +307,6 @@ static int usb_add(libusb_device *dev)
 		return -1;
 
 	ConfigItem *item = get_config()->find(desc.idVendor, desc.idProduct, desc.bcdDevice);
-	this_thread::sleep_for(g_usb_poll_period.load());
 
 	if (item)
 	{
@@ -349,59 +403,32 @@ static int check_usb_timeout(Timer& usb_timer)
 	return 0;
 }
 
-static int ensure_libusb_initialized()
-{
-	static once_flag is_libusb_init;
-	try {
-		call_once(is_libusb_init, []{
-			if (libusb_init(nullptr) < 0)
-				throw runtime_error{"Call libusb_init failure"};
-			libusb_set_debug(nullptr, get_libusb_debug_level());
-		});
-	} catch(const exception& ex) {
-		set_last_err_string(ex.what());
-		return -1;
-	}
-	return 0;
-}
-
 int polling_usb(std::atomic<int>& bexit)
 {
-	libusb_device **oldlist = nullptr;
-	libusb_device **newlist = nullptr;
-
-	if (ensure_libusb_initialized())
-		return -1;
-
 	if (run_cmds("CFG:", nullptr))
 		return -1;
 
 	Timer usb_timer;
 
+	CAutoList oldlist(nullptr);
+
 	while(!bexit)
 	{
-		ssize_t sz = libusb_get_device_list(nullptr, &newlist);
-		if (sz < 0)
+		CAutoList newlist;
+		if (!newlist.good())
 		{
-			set_last_err_string("Call libusb_get_device_list failure");
 			return -1;
 		}
 
-		compare_list(oldlist, newlist);
+		compare_list(oldlist.list, newlist.list);
 
-		if (oldlist)
-			libusb_free_device_list(oldlist, 1);
-
-		oldlist = newlist;
+		std::swap(oldlist, newlist);
 
 		this_thread::sleep_for(g_usb_poll_period.load());
 
 		if (check_usb_timeout(usb_timer))
 			return -1;
 	}
-
-	if(newlist)
-		libusb_free_device_list(newlist, 1);
 
 	return 0;
 }
@@ -417,9 +444,6 @@ CmdUsbCtx::~CmdUsbCtx()
 
 int CmdUsbCtx::look_for_match_device(const char *pro)
 {
-	if (ensure_libusb_initialized())
-		return -1;
-
 	if (run_cmds("CFG:", nullptr))
 		return -1;
 
@@ -427,17 +451,21 @@ int CmdUsbCtx::look_for_match_device(const char *pro)
 
 	while (1)
 	{
-		libusb_device **newlist = nullptr;
-		libusb_get_device_list(nullptr, &newlist);
+		CAutoList l;
+
+		if (!l.good()) {
+			break;
+		}
+
 		size_t i = 0;
 		libusb_device *dev;
 
-		while ((dev = newlist[i++]) != nullptr)
+		while ((dev = l.list[i++]) != nullptr)
 		{
 			struct libusb_device_descriptor desc;
 			int r = libusb_get_device_descriptor(dev, &desc);
 			if (r < 0) {
-				set_last_err_string("failure get device descrior");
+				set_last_err_string("failure get device descriptor");
 				return -1;
 			}
 			string str = get_device_path(dev);
@@ -449,12 +477,12 @@ int CmdUsbCtx::look_for_match_device(const char *pro)
 			if (item && item->m_protocol == str_to_upper(pro))
 				{
 					uuu_notify nt;
-					nt.type = uuu_notify::NOFITY_DEV_ATTACH;
+					nt.type = uuu_notify::NOTIFY_DEV_ATTACH;
 					m_config_item = item;
 					m_current_bcd = desc.bcdDevice;
 
 					int ret;
-					if (ret = open_libusb(dev, &(m_dev)))
+					if ((ret = open_libusb(dev, &(m_dev))))
 						return ret;
 
 					nt.str = (char*)str.c_str();
@@ -464,7 +492,6 @@ int CmdUsbCtx::look_for_match_device(const char *pro)
 				}
 		}
 
-		libusb_free_device_list(newlist, 1);
 		this_thread::sleep_for(200ms);
 
 		uuu_notify nt;
@@ -472,7 +499,8 @@ int CmdUsbCtx::look_for_match_device(const char *pro)
 		nt.str = (char*)"Wait for Known USB";
 		call_notify(nt);
 
-		check_usb_timeout(usb_timer);
+		if (check_usb_timeout(usb_timer))
+			return -1;
 	}
 
 	return -1;
@@ -486,20 +514,20 @@ int uuu_add_usbpath_filter(const char *path)
 
 int uuu_for_each_devices(uuu_ls_usb_devices fn, void *p)
 {
-	if (ensure_libusb_initialized())
-		return -1;
-
-	libusb_device **newlist = nullptr;
-	libusb_get_device_list(nullptr, &newlist);
+	CAutoList l;
 	size_t i = 0;
 	libusb_device *dev;
 
-	while ((dev = newlist[i++]) != nullptr)
+	if (!l.good()) {
+		return -1;
+	}
+
+	while ((dev = l.list[i++]) != nullptr)
 	{
 		struct libusb_device_descriptor desc;
 		int r = libusb_get_device_descriptor(dev, &desc);
 		if (r < 0) {
-			set_last_err_string("failure get device descrior");
+			set_last_err_string("failure get device descriptor");
 			return -1;
 		}
 		string str = get_device_path(dev);
@@ -514,9 +542,6 @@ int uuu_for_each_devices(uuu_ls_usb_devices fn, void *p)
 			}
 		}
 	}
-
-	libusb_free_device_list(newlist, 1);
-	libusb_exit(nullptr);
 
 	return 0;
 }
