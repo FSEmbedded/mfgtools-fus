@@ -38,6 +38,13 @@
 #include <map>
 #include <memory>
 
+/* Allow opportunistic use of the C++17 fall-through attribute . */
+#if defined(__cplusplus) && __cplusplus >= 201703L
+#define FALLTHROUGH [[fallthrough]]
+#else
+#define FALLTHROUGH
+#endif
+
 class FileBuffer;
 
 #pragma pack(1)
@@ -55,8 +62,8 @@ struct Zip_file_desc
 	uint16_t version_mini_extract;
 	uint16_t flags;
 	uint16_t compress_method;
-	uint16_t last_modidfy_time;
-	uint16_t last_modidfy_date;
+	uint16_t last_modify_time;
+	uint16_t last_modify_date;
 	uint32_t crc;
 	uint32_t compressed_size;
 	uint32_t uncompressed_size;
@@ -71,8 +78,8 @@ struct Zip_central_dir
 	uint16_t version_mini_extract;
 	uint16_t flags;
 	uint16_t compress_method;
-	uint16_t last_modidfy_time;
-	uint16_t last_modidfy_date;
+	uint16_t last_modify_time;
+	uint16_t last_modify_date;
 	uint32_t crc;
 	uint32_t compressed_size;
 	uint32_t uncompressed_size;
@@ -93,8 +100,8 @@ struct Zip64_central_dir
 	uint16_t version_mini_extract;
 	uint16_t flags;
 	uint16_t compress_method;
-	uint16_t last_modidfy_time;
-	uint16_t last_modidfy_date;
+	uint16_t last_modify_time;
+	uint16_t last_modify_date;
 	uint32_t crc;
 	uint32_t compressed_size;
 	uint32_t uncompressed_size;
@@ -149,7 +156,7 @@ struct Zip_ext
 };
 
 #define EOCD_SIGNATURE 0x06054b50
-#define DIR_SIGNTURE 0x02014b50
+#define DIR_SIGNATURE 0x02014b50
 #define DATA_SIGNATURE 0x08074b50
 #define FILE_SIGNATURE 0x04034b50
 #define EOCD64_LOCATOR_SIGNATURE 0x07064b50
@@ -172,7 +179,6 @@ private:
 	size_t m_compressedsize;
 	size_t m_offset;
 	z_stream m_strm;
-	bool m_decompressed;
 
 	friend Zip;
 };

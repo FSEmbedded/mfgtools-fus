@@ -28,6 +28,7 @@
 * POSSIBILITY OF SUCH DAMAGE.
 *
 */
+#include <stdint.h>
 #include <string>
 #include <stdarg.h>
 #include <locale>
@@ -142,14 +143,20 @@ inline bool compare_str(const string &str1, const string &str2, bool ignore_case
 		return str1 == str2;
 }
 
-uint16_t str_to_uint16(const string &str, bool * conversion_suceeded = nullptr);
-uint32_t str_to_uint32(const string &str, bool * conversion_suceeded = nullptr);
-uint64_t str_to_uint64(const string &str, bool * conversion_suceeded = nullptr);
+uint16_t str_to_uint16(const string &str, bool * conversion_succeeded = nullptr);
+uint32_t str_to_uint32(const string &str, bool * conversion_succeeded = nullptr);
+uint64_t str_to_uint64(const string &str, bool * conversion_succeeded = nullptr);
 
 template <class T>
 inline T round_up(T x, T align)
 {
 	return (x + align - 1) / align * align;
+}
+
+template <class T>
+inline T div_round_up(T x, T align)
+{
+	return (x + align - 1) / align;
 }
 
 inline std::string trim(const std::string &s)

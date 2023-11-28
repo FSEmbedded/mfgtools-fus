@@ -81,7 +81,7 @@ struct uuu_notify
 		NOTIFY_TRANS_POS,   /*Current finished transfer pos*/
 
 		NOTIFY_WAIT_FOR,
-		NOFITY_DEV_ATTACH,
+		NOTIFY_DEV_ATTACH,
 
 		NOTIFY_DECOMPRESS_START,
 		NOTIFY_DECOMPRESS_SIZE,
@@ -138,5 +138,14 @@ void uuu_set_poll_period(int period_in_milliseconds);
  * bit 16:31 for uuu
  */
 void uuu_set_debug_level(uint32_t mask);
+
+/*
+ * 0 disable small memory mode, buffer all data, it is used for multi-board program.
+ */
+void uuu_set_small_mem(uint32_t val);
+
+#define MAX_USER_LEN 128
+typedef int (*uuu_askpasswd)(char* prompt, char user[MAX_USER_LEN], char passwd[MAX_USER_LEN]);
+int uuu_set_askpasswd(uuu_askpasswd ask);
 
 #endif

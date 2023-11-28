@@ -31,37 +31,50 @@
 
 #include "liberror.h"
 #include "libuuu.h"
+#include "libusb.h"
+
+#include <mutex>
+#include <atomic>
 
 using namespace std;
 
+static mutex g_last_error_str_mutex;
 static string g_last_error_str;
-static int g_last_err_id;
+static atomic<int> g_last_err_id;
 
 static uint32_t g_debug_level;
-
-void uuu_set_debug_level(uint32_t mask)
-{
-	g_debug_level = mask;
-}
 
 int get_libusb_debug_level() noexcept
 {
 	return g_debug_level & 0xFFFF;
 }
 
+void uuu_set_debug_level(uint32_t mask)
+{
+	g_debug_level = mask;
+
+#if LIBUSB_API_VERSION > 0x01000106 && !defined(FORCE_OLDLIBUSB)
+		libusb_set_option(nullptr, LIBUSB_OPTION_LOG_LEVEL, get_libusb_debug_level());
+#else
+		libusb_set_debug(nullptr, get_libusb_debug_level());
+#endif
+}
+
 const char * uuu_get_last_err_string()
 {
+	lock_guard<mutex> l(g_last_error_str_mutex);
 	return g_last_error_str.c_str();
 }
 
 void set_last_err_string(const string &str)
 {
+	lock_guard<mutex> l(g_last_error_str_mutex);
 	g_last_error_str = str;
 }
 
 int uuu_get_last_err()
 {
-	return g_last_err_id;
+	return g_last_err_id.load();
 }
 
 void set_last_err_id(int id)

@@ -39,7 +39,7 @@
 
 using namespace std;
 
-static constexpr std::array<ROM_INFO, 15> g_RomInfo
+static constexpr std::array<ROM_INFO, 16> g_RomInfo
 {
 	ROM_INFO{ "MX6Q",	 0x00910000, ROM_INFO_HID | ROM_INFO_HID_MX6 },
 	ROM_INFO{ "MX6D",	 0x00910000, ROM_INFO_HID | ROM_INFO_HID_MX6 },
@@ -48,12 +48,13 @@ static constexpr std::array<ROM_INFO, 15> g_RomInfo
 	ROM_INFO{ "MX6UL",	 0x00910000, ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_HID_SKIP_DCD },
 	ROM_INFO{ "MX6ULL",	 0x00910000, ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_HID_SKIP_DCD },
 	ROM_INFO{ "MX6SLL",	 0x00910000, ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_HID_SKIP_DCD },
-	ROM_INFO{ "MX8MQ",	 0x00910000, ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_HID_SKIP_DCD },
+	ROM_INFO{ "MX8MQ",	 0x00910000, ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_HID_SKIP_DCD | ROM_INFO_NEED_BAREBOX_FULL_IMAGE},
 	ROM_INFO{ "MX7ULP",	 0x2f018000, ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_HID_SKIP_DCD },
 	ROM_INFO{ "MXRT106X",	 0x1000,     ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_HID_SKIP_DCD },
 	ROM_INFO{ "MX8QXP",      0x0,        ROM_INFO_HID | ROM_INFO_HID_NO_CMD | ROM_INFO_HID_UID_STRING },
 	ROM_INFO{ "MX28",	 0x0,        ROM_INFO_HID},
 	ROM_INFO{ "MX815",       0x0,        ROM_INFO_HID | ROM_INFO_HID_NO_CMD | ROM_INFO_HID_UID_STRING | ROM_INFO_HID_EP1 | ROM_INFO_HID_PACK_SIZE_1020 | ROM_INFO_HID_ROMAPI},
+	ROM_INFO{ "MX95",        0x0,        ROM_INFO_HID | ROM_INFO_HID_NO_CMD | ROM_INFO_HID_UID_STRING | ROM_INFO_HID_EP1 | ROM_INFO_HID_PACK_SIZE_1020 },
 	ROM_INFO{ "SPL",	 0x0,	     ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_SPL_JUMP | ROM_INFO_HID_SDP_NO_MAX_PER_TRANS},
 	ROM_INFO{ "SPL1",	 0x0,	     ROM_INFO_HID | ROM_INFO_HID_MX6 | ROM_INFO_SPL_JUMP | ROM_INFO_HID_SDP_NO_MAX_PER_TRANS | ROM_INFO_AUTO_SCAN_UBOOT_POS},
 };
@@ -124,7 +125,7 @@ static constexpr uint32_t IMG_V2X = 0x0B;
 #pragma pack ()
 
 
-size_t GetContainerActualSize(shared_ptr<FileBuffer> p, size_t offset, bool bROMAPI)
+size_t GetContainerActualSize(shared_ptr<DataBuffer> p, size_t offset, bool bROMAPI)
 {
 	if(bROMAPI)
 		return p->size() - offset;
@@ -185,7 +186,7 @@ bool CheckHeader(uint32_t *p)
 	return false;
 }
 
-size_t GetFlashHeaderSize(shared_ptr<FileBuffer> p, size_t offset)
+size_t GetFlashHeaderSize(shared_ptr<DataBuffer> p, size_t offset)
 {
 	static constexpr std::array<size_t, 4> offsets
 	{
@@ -196,7 +197,7 @@ size_t GetFlashHeaderSize(shared_ptr<FileBuffer> p, size_t offset)
 	};
 
 	for (const auto test_offset : offsets) {
-		if (p->m_avaible_size < (offset + test_offset)) {
+		if (p->size() < (offset + test_offset)) {
 			return 0;
 		}
 
@@ -223,7 +224,7 @@ struct fsheader
 	byte descr[32];
 };
 
-size_t GetBinaryFromNBoot(shared_ptr<FileBuffer> p, size_t offset, size_t * size)
+size_t GetBinaryFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t * size)
 {
 	struct fsheader* head;
 	uint8_t* start = p->data() + offset;
@@ -272,7 +273,7 @@ size_t GetBinaryFromNBoot(shared_ptr<FileBuffer> p, size_t offset, size_t * size
 	return pos;
 }
 
-bool IsMBR(shared_ptr<FileBuffer> p)
+bool IsMBR(shared_ptr<DataBuffer> p)
 {
 	uint16_t * m = (uint16_t *)(p->data() + 510);
 	if (*m == 0xaa55)
@@ -280,12 +281,12 @@ bool IsMBR(shared_ptr<FileBuffer> p)
 	return false;
 }
 
-size_t ScanTerm(std::shared_ptr<FileBuffer> p, size_t &pos, size_t offset, size_t limited)
+size_t ScanTerm(std::shared_ptr<DataBuffer> p, size_t &pos, size_t offset, size_t limited)
 {
 	const char *tag = "UUUBURNXXOEUZX7+A-XY5601QQWWZ";
 
-	if (limited >= p->m_avaible_size)
-		limited = p->m_avaible_size;
+	if (limited >= p->size())
+		limited = p->size();
 
 	limited = limited - strlen(tag) - 64;
 

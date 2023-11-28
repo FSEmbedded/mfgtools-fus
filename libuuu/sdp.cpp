@@ -30,6 +30,7 @@
 */
 
 #include <string>
+#include "config.h"
 #include "sdps.h"
 #include "hidreport.h"
 #include "liberror.h"
@@ -95,13 +96,15 @@ int SDPCmdBase::get_status(HIDReport *p, uint32_t &status, uint8_t report_id)
 
 int SDPCmdBase::init_cmd()
 {
-	memset(&m_spdcmd, 0, sizeof(m_spdcmd)); return 0;
+	memset(&m_spdcmd, 0, sizeof(m_spdcmd));
+	insert_param_info("-scanlimited", &m_scan_limited, Param::Type::e_uint64);
+	return 0;
 }
 
-IvtHeader *SDPCmdBase::search_ivt_header(shared_ptr<FileBuffer> data, size_t &off, size_t limit)
+IvtHeader *SDPCmdBase::search_ivt_header(shared_ptr<DataBuffer> data, size_t &off, size_t limit)
 {
-	if (limit >= data->m_avaible_size)
-		limit = data->m_avaible_size;
+	if (limit >= data->size())
+		limit = data->size();
 
 	for (; off < limit; off += 0x4)
 	{
@@ -147,12 +150,14 @@ int SDPDcdCmd::run(CmdCtx*ctx)
 	}
 	init_cmd();
 
-	shared_ptr<FileBuffer> buff, p = get_file_buffer(m_filename, true);
+	shared_ptr<FileBuffer> p = get_file_buffer(m_filename, true);
 
 	if (!p)
 		return -1;
 
-	buff= p->request_data(0, WIC_BOOTPART_SIZE);
+	shared_ptr<DataBuffer> buff;
+	buff = p->request_data(0, m_scan_limited);
+	if (!buff) return -1;
 
 	size_t off = 0;
 	IvtHeader *pIVT = search_ivt_header(buff, off);
@@ -176,20 +181,20 @@ int SDPDcdCmd::run(CmdCtx*ctx)
 
 	uint32_t size = (pdcd[1] << 8) | pdcd[2];
 
-	if (size >= WIC_BOOTPART_SIZE)
+	if (size >= m_scan_limited)
 	{
 		set_last_err_string("dcd bigger than 8M");
 		return -1;
 	}
 
-	// point maybe change after new requestion buffer.
+	// point maybe change after new requisition buffer.
 	pdcd = &(buff->at(off + pIVT->DCDAddress - pIVT->SelfAddr));
 
 	m_spdcmd.m_cmd = ROM_KERNEL_CMD_DCD_WRITE;
 	m_spdcmd.m_addr = EndianSwap(m_dcd_addr ? m_dcd_addr : rom->free_addr);
 	m_spdcmd.m_count = EndianSwap(size);
 
-	HIDTrans dev;
+	HIDTrans dev(m_timeout);
 	if (dev.open(ctx->m_dev))
 		return -1;
 
@@ -213,7 +218,7 @@ SDPSkipDCDCmd::SDPSkipDCDCmd(char *p) : SDPCmdBase(p)
 
 int SDPSkipDCDCmd::run(CmdCtx*ctx)
 {
-	HIDTrans dev;
+	HIDTrans dev(m_timeout);
 	if (dev.open(ctx->m_dev))
 		return -1;
 
@@ -234,6 +239,65 @@ SDPBootCmd::SDPBootCmd(char *p) : SDPCmdBase(p)
 	insert_param_info("-nojump", &m_nojump, Param::Type::e_bool);
 	insert_param_info("-cleardcd", &m_clear_dcd, Param::Type::e_bool);
 	insert_param_info("-dcdaddr", &m_dcd_addr, Param::Type::e_uint32);
+	insert_param_info("-scanlimited", &m_scan_limited, Param::Type::e_uint64);
+	insert_param_info("-barebox", &m_barebox, Param::Type::e_bool);
+}
+
+# define BAREBOX_MAGIC_OFFSET	0x20
+
+bool SDPBootCmd::is_barebox_img(void)
+{
+	shared_ptr<FileBuffer> fbuf= get_file_buffer(m_filename, true);
+	if (fbuf == nullptr)
+		return false;
+
+	string barebox_magic ("barebox");
+
+	shared_ptr<DataBuffer> dbuf = fbuf->request_data(0, BAREBOX_MAGIC_OFFSET + barebox_magic.length());
+	if (dbuf == nullptr)
+		return false;
+
+	string img ((const char *)&dbuf->at(BAREBOX_MAGIC_OFFSET), barebox_magic.length());
+
+	return img.compare(barebox_magic) == 0 ? true : false;
+}
+
+int SDPBootCmd::load_barebox(CmdCtx *ctx)
+{
+	const ROM_INFO *rom = search_rom_info(ctx->m_config_item);
+
+	if (!rom)
+		return 0;
+
+	// The barebox USB loading mechanism differs between SoCs due to SRAM
+	// size limitations.
+	//
+	// E.g. all i.MX8M SoCs require a two stage loading, first the
+	// pre-bootloader (PBL) is loaded to the internal SRAM and started. The
+	// PBL intialize the DDR and uses the BootROM initialized USB
+	// controller to load the remaining "full barebox image" to the DDR.
+	//
+	// On i.MX6 devices this is not the case since the DDR setup is done
+	// via the DCD and we can load the image directly to the DDR.
+	//
+	// The ROM_INFO_NEED_BAREBOX_FULL_IMAGE flag indicates if the two-stage
+	// load mechanism is required for a specific SoC. So the user can
+	// always specify '-barebox' no matter if it's required or not:
+	//
+	// SDP: boot -barebox -f <barebox.img>
+	if (!(rom->flags & ROM_INFO_NEED_BAREBOX_FULL_IMAGE))
+		return 0;
+
+	string str;
+	str = "SDP: write -f ";
+	str += m_filename;
+	str += " -ivt 0";
+	str += " -barebox-bl33";
+
+	SDPWriteCmd wr((char *)str.c_str());
+	if (wr.parser()) return -1;
+
+	return wr.run(ctx);
 }
 
 int SDPBootCmd::run(CmdCtx *ctx)
@@ -245,13 +309,34 @@ int SDPBootCmd::run(CmdCtx *ctx)
 		str += " -dcdaddr ";
 		str += std::to_string(m_dcd_addr);
 	}
+
+	if (m_scan_limited != UINT64_MAX)
+	{
+		str += " -scanlimited ";
+		str += std::to_string(m_scan_limited);
+	}
+
 	SDPDcdCmd dcd((char *)str.c_str());
+
+	if (m_scan_limited != UINT64_MAX)
+	{
+		str += " -scanlimited ";
+		str += std::to_string(m_scan_limited);
+	}
+
 	if (dcd.parser()) return -1;
 	if (dcd.run(ctx)) return -1;
 
 	str = "SDP: write -f ";
 	str += m_filename;
 	str += " -ivt 0";
+
+	if (m_scan_limited != UINT64_MAX)
+	{
+		str += " -scanlimited ";
+		str += std::to_string(m_scan_limited);
+	}
+
 	SDPWriteCmd wr((char *)str.c_str());
 	if (wr.parser()) return -1;
 	if (wr.run(ctx)) return -1;
@@ -262,11 +347,22 @@ int SDPBootCmd::run(CmdCtx *ctx)
 	if (m_clear_dcd)
 		str += " -cleardcd";
 
+	if (m_scan_limited != UINT64_MAX)
+	{
+		str += " -scanlimited ";
+		str += std::to_string(m_scan_limited);
+	}
+
 	SDPJumpCmd jmp((char *)str.c_str());
 	if (!m_nojump)
 	{
 		if (jmp.parser()) return -1;
 		if (jmp.run(ctx)) return -1;
+	}
+
+	if (m_barebox || is_barebox_img())
+	{
+		if (load_barebox(ctx)) return -1;
 	}
 
 	SDPBootlogCmd log(nullptr);
@@ -283,7 +379,7 @@ SDPStatusCmd::SDPStatusCmd(char *p) : SDPCmdBase(p)
 
 int SDPStatusCmd::run(CmdCtx *ctx)
 {
-	HIDTrans dev;
+	HIDTrans dev(m_timeout);
 	if (dev.open(ctx->m_dev))
 		return -1;
 
@@ -312,11 +408,13 @@ SDPWriteCmd::SDPWriteCmd(char *p) : SDPCmdBase(p)
 	m_download_addr = 0;
 	m_bskipspl = false;
 	m_bscanterm = false;
+	m_barebox_bl33 = false;
 
 	insert_param_info("write", nullptr, Param::Type::e_null);
 	insert_param_info("-f", &m_filename, Param::Type::e_string_filename);
 	insert_param_info("-ivt", &m_Ivt, Param::Type::e_uint32);
 	insert_param_info("-addr", &m_download_addr, Param::Type::e_uint32);
+	insert_param_info("-barebox-bl33", &m_barebox_bl33, Param::Type::e_bool);
 	insert_param_info("-offset", &m_offset, Param::Type::e_uint32);
 	insert_param_info("-skipspl", &m_bskipspl, Param::Type::e_bool);
 	insert_param_info("-skipfhdr", &m_bskipfhdr, Param::Type::e_bool);
@@ -327,14 +425,18 @@ int SDPWriteCmd::run(CmdCtx*ctx)
 {
 	size_t size;
 	uint8_t *pbuff;
-	int offset = 0;
+	ssize_t offset = 0;
+	bool validate_run = true;
 
-	shared_ptr<FileBuffer> fbuff, p1= get_file_buffer(m_filename, true);
+	shared_ptr<FileBuffer> p1= get_file_buffer(m_filename, true);
 
 	if (p1 == nullptr)
 		return -1;
 
-	fbuff = p1->request_data(0, WIC_BOOTPART_SIZE);
+	shared_ptr<DataBuffer> fbuff;
+
+	fbuff = p1->request_data(0, m_scan_limited);
+	if (!fbuff) return -1;
 
 	if (m_Ivt < 0)
 	{
@@ -380,15 +482,18 @@ int SDPWriteCmd::run(CmdCtx*ctx)
 			IvtHeader *pIvt = search_ivt_header(fbuff, off, 0x100000);
 			if (pIvt)
 			{
-				BootData *pDB = (BootData *) &(fbuff->at(off + pIvt->BootData - pIvt->SelfAddr));
-				offset = off + pDB->ImageSize - (pIvt->SelfAddr - pDB->ImageStartAddr);
+				if (pIvt->BootData)
+				{
+					BootData *pDB = (BootData *) &(fbuff->at(off + pIvt->BootData - pIvt->SelfAddr));
+					offset = off + pDB->ImageSize - (pIvt->SelfAddr - pDB->ImageStartAddr);
+				}
 			}
 			else
 			{
 				offset += GetContainerActualSize(fbuff, offset);
 			}
 
-			if (offset >= fbuff->m_avaible_size)
+			if (size_t(offset) >= fbuff->size())
 			{
 				set_last_err_string("Unknown Image type, can't use skipspl format");
 				return -1;
@@ -404,7 +509,7 @@ int SDPWriteCmd::run(CmdCtx*ctx)
 		for (int i = 0; i < m_Ivt; i++)
 		{
 			off += sizeof(IvtHeader);
-			pIvt = search_ivt_header(fbuff, off, WIC_BOOTPART_SIZE);
+			pIvt = search_ivt_header(fbuff, off, m_scan_limited);
 		}
 		if (pIvt == nullptr)
 		{
@@ -418,7 +523,7 @@ int SDPWriteCmd::run(CmdCtx*ctx)
 		//size = fbuff->size() - off;
 		size = pDB->ImageSize - (pIvt->SelfAddr - pDB->ImageStartAddr);
 
-		if (size >= WIC_BOOTPART_SIZE)
+		if (size >= m_scan_limited)
 		{
 			set_last_err_string("TODO: image is too big");
 			return -1;
@@ -429,14 +534,28 @@ int SDPWriteCmd::run(CmdCtx*ctx)
 		if (size > fbuff->size() - off)
 			size = fbuff->size() - off;
 
+		if (m_barebox_bl33) {
+			if (pIvt->IvtBarker != IVT_BARKER_HEADER) {
+				set_last_err_string("Barebox BL33 loading is only support for IVT Header V2");
+				return -1;
+			}
+			offset = pIvt->ImageStartAddr - pIvt->SelfAddr;
+			size = fbuff->size() - off - offset;
+			m_download_addr = 0;
+
+			// Barebox does start as soon as the bl33 was loaded
+			// and the check_ack() fails
+			validate_run = false;
+		}
+
 		pbuff = (uint8_t*)pIvt;
 	}
-	return run(ctx, pbuff + offset, size, m_download_addr);
+	return run(ctx, pbuff + offset, size, m_download_addr, validate_run);
 }
 
-int SDPWriteCmd::run(CmdCtx *ctx, void *pbuff, size_t size, uint32_t addr)
+int SDPWriteCmd::run(CmdCtx *ctx, void *pbuff, size_t size, uint32_t addr, bool validate)
 {
-	HIDTrans dev;
+	HIDTrans dev(m_timeout);
 	if (dev.open(ctx->m_dev))
 		return -1;
 
@@ -473,7 +592,7 @@ int SDPWriteCmd::run(CmdCtx *ctx, void *pbuff, size_t size, uint32_t addr)
 		if (report.write(((uint8_t*)pbuff)+i, sz, 2))
 			return -1;
 
-		if (check_ack(&report, ROM_STATUS_ACK))
+		if (validate && check_ack(&report, ROM_STATUS_ACK))
 			return -1;
 	}
 
@@ -491,7 +610,7 @@ SDPReadMemCmd::SDPReadMemCmd(char *p) : SDPCmdBase(p)
 
 int SDPReadMemCmd::run(CmdCtx *ctx)
 {
-	HIDTrans dev;
+	HIDTrans dev(m_timeout);
 	if (dev.open(ctx->m_dev))
 		return -1;
 
@@ -557,7 +676,7 @@ SDPWriteMemCmd::SDPWriteMemCmd(char *p) : SDPCmdBase(p)
 
 int SDPWriteMemCmd::run(CmdCtx *ctx)
 {
-	HIDTrans dev;
+	HIDTrans dev(m_timeout);
 	if (dev.open(ctx->m_dev))
 		return -1;
 
@@ -617,7 +736,7 @@ int SDPJumpCmd::run(CmdCtx *ctx)
 {
 	const ROM_INFO * rom = search_rom_info(ctx->m_config_item);
 
-	HIDTrans dev;
+	HIDTrans dev(m_timeout);
 	if (dev.open(ctx->m_dev))
 		return -1;
 
@@ -642,14 +761,16 @@ int SDPJumpCmd::run(CmdCtx *ctx)
 		return 0;
 	}
 
-	shared_ptr<FileBuffer> buff, p1 = get_file_buffer(m_filename, true);
+	shared_ptr<FileBuffer> p1 = get_file_buffer(m_filename, true);
 	if (!p1)
 		return -1;
 
-	buff = p1->request_data(0, WIC_BOOTPART_SIZE);
+	shared_ptr<DataBuffer> buff;
+	buff = p1->request_data(0, m_scan_limited);
+	if (!buff) return -1;
 
 	size_t off = 0;
-	IvtHeader *pIVT = search_ivt_header(buff, off, WIC_BOOTPART_SIZE);
+	IvtHeader *pIVT = search_ivt_header(buff, off, m_scan_limited);
 
 	for (int i = 0; i < m_Ivt; i++)
 	{

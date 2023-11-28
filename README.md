@@ -1,11 +1,14 @@
 # uuu (Universal Update Utility), mfgtools 3.0
 
-[![Build status](https://ci.appveyor.com/api/projects/status/github/NXPmicro/mfgtools?svg=true)](https://ci.appveyor.com/project/nxpfrankli/mfgtools-kvqcg)
-[![Build Status](https://travis-ci.com/NXPmicro/mfgtools.svg?branch=master)](https://travis-ci.com/NXPmicro/mfgtools)
+[![Build status](https://ci.appveyor.com/api/projects/status/evp1xvj88ybuhfwi?svg=true)](https://ci.appveyor.com/project/nxpfrankli/mfgtools-kvqcg)
 
-![GitHub](https://img.shields.io/github/license/NXPmicro/mfgtools.svg) 
+[![macOS Build](https://github.com/nxp-imx/mfgtools/actions/workflows/macOS.yaml/badge.svg?branch=master)](https://github.com/nxp-imx/mfgtools/actions/workflows/macOS.yaml)
+[![Build with VS Studio](https://github.com/nxp-imx/mfgtools/actions/workflows/win.yaml/badge.svg)](https://github.com/nxp-imx/mfgtools/actions/workflows/win.yaml)
+[![Build for x64 ubuntu-lastest](https://github.com/nxp-imx/mfgtools/actions/workflows/build.yaml/badge.svg)](https://github.com/nxp-imx/mfgtools/actions/workflows/build.yaml)
 
-[![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/universal-update-utility) sudo snap install universal-update-utility;
+![GitHub](https://img.shields.io/github/license/nxp-imx/mfgtools.svg) 
+
+[![universal-update-utility](https://snapcraft.io/universal-update-utility/badge.svg)](https://snapcraft.io/universal-update-utility)
 
 Freescale/NXP I.MX Chip image deploy tools.
 **original linux version uses "linux" branch, windows version uses "windows" branch**
@@ -21,7 +24,7 @@ Freescale/NXP I.MX Chip image deploy tools.
  - The real cross platform. Linux, Windows, MacOS(not test yet)
  - Multi devices program support
  - Daemon mode support
- - Few depedencies (only libusb, zlibc, libbz2)
+ - Few dependencies (only libusb, zlibc, libbz2)
  - Firmware (uboot/kernel) uses WCID to auto load the winusb driver on the Windows side. Windows7 users need to install the winusb driver from https://zadig.akeo.ie/  Windows10 will install the driver automatically.
 
 # Examples:
@@ -34,7 +37,7 @@ Freescale/NXP I.MX Chip image deploy tools.
 
   uuu -v u-boot.imx         verbose mode
 
-  uuu -d u-boot.imx         Once it detects the attachement of a known device, download boot.imx.
+  uuu -d u-boot.imx         Once it detects the attachment of a known device, download boot.imx.
 
                             u-boot.imx can be replaced, new file will be download once board reset.
 
@@ -49,16 +52,15 @@ Freescale/NXP I.MX Chip image deploy tools.
 # Prebuilt Image and pdf document
 
 The prebuilt image and document are here:
-  - https://github.com/NXPmicro/mfgtools/releases
-  - UUU.pdf is snapshot of [wiki](https://github.com/NXPmicro/mfgtools/wiki)
+  - https://github.com/nxp-imx/mfgtools/releases
+  - **ubuntu 22.04, 'apt-get install uuu'**
+  - UUU.pdf is snapshot of [wiki](https://github.com/nxp-imx/mfgtools/wiki)
 
 # How to Build:
 
 ## Windows
-- `git clone https://github.com/NXPmicro/mfgtools.git`
+- `git clone --recurse-submodules https://github.com/nxp-imx/mfgtools.git`
 - `cd mfgtools`
-- `git submodule init`
-- `git submodule update`
 - `open msvs/uuu.sln with Visual Studio 2017`
 
 Visual Studio
@@ -66,9 +68,9 @@ Visual Studio
 Note that, since uuu is an OSI compliant Open Source project, you are entitled to download and use the freely available Visual Studio Community Edition to build, run or develop for uuu. As per the Visual Studio Community Edition license this applies regardless of whether you are an individual or a corporate user.
 
 ## Linux
-- `git clone https://github.com/NXPmicro/mfgtools.git`
+- `git clone https://github.com/nxp-imx/mfgtools.git`
 - `cd mfgtools`
-- `sudo apt-get install libusb-1.0-0-dev libzip-dev libbz2-dev pkg-config cmake libssl-dev g++`
+- `sudo apt-get install libusb-1.0-0-dev libbz2-dev libzstd-dev pkg-config cmake libssl-dev g++ zlib1g-dev`
 - `cmake . && make`
 
 The above commands build mfgtools in source. To build it out of source
@@ -81,12 +83,18 @@ For cmake prior 3.13:
 - `cmake .. && make`
 
 ## macOS
-- `git clone https://github.com/NXPmicro/mfgtools.git`
+- `git clone https://github.com/nxp-imx/mfgtools.git`
 - `cd mfgtools`
-- `brew install cmake libusb libzip openssl pkg-config`
+- `brew install cmake libusb openssl pkg-config`
 - `cmake -DOPENSSL_ROOT_DIR=$(brew --prefix)/opt/openssl . && make`
 
 Note that we assume [brew](https://brew.sh) is installed and can be used to resolve dependencies as shown above. The remaining dependency `libbz2` can be resolved via the XCode supplied libraries.
+
+Note if you meet "can't detach kernel driver" try to check libusb version. 
+```
+brew info libusb
+==> libusb: stable 1.0.26 (bottled), HEAD
+```
 
 # Run environment
  - Windows 10 64 bit
@@ -101,4 +109,4 @@ The BSD licensed prebuilt Windows binary version of uuu is statically linked wit
  - bzip2 (BSD license) is from https://github.com/enthought/bzip2-1.0.6
  - zlib  (zlib license) is from https://github.com/madler/zlib.git
  - libusb (LGPL-2.1) is from  https://github.com/libusb/libusb.git
-
+ - zstd (Dual BSD\GPLv2 Licenses) is from https://github.com/facebook/zstd

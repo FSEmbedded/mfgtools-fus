@@ -33,6 +33,7 @@
 #include "libcomm.h"
 #include "liberror.h"
 #include "trans.h"
+#include "zip.h"
 
 #include <cstring>
 
@@ -77,12 +78,24 @@ int HIDReport::write(const void *p, size_t sz, uint8_t report_id)
 		m_out_buff[0] = report_id;
 
 		size_t s = sz - off;
-		if (s > m_size_out)
+		size_t copy_sz = s;
+
+		if (copy_sz > m_size_out)
+			copy_sz = m_size_out;
+
+		/*
+		 * The Windows HIDAPI is ver strict. It always require to send
+		 * buffers of the size reported by the HID Report Descriptor.
+		 * Therefore we must to send m_size_out buffers for HID ID 2
+		 * albeit it may not required for the last buffer.
+		 */
+		if (s > m_size_out || report_id == 2)
 			s = m_size_out;
 
-		memcpy(m_out_buff.data() + m_size_payload, buff + off, s);
+		/* copy_sz can't be bigger then input data size, otherwise access unpaged memory */
+		memcpy(m_out_buff.data() + m_size_payload, buff + off, copy_sz);
 
-		int ret = m_pdev->write(m_out_buff.data(), report_id == 1? s + m_size_payload: m_size_out + m_size_payload);
+		int ret = m_pdev->write(m_out_buff.data(), s + m_size_payload);
 
 		if (ret < 0)
 			return -1;
@@ -92,6 +105,7 @@ int HIDReport::write(const void *p, size_t sz, uint8_t report_id)
 			notify(off, uuu_notify::NOTIFY_TRANS_POS);
 		}
 	}
-	notify(off, uuu_notify::NOTIFY_TRANS_POS);
+
+	notify(sz, uuu_notify::NOTIFY_TRANS_POS);
 	return 0;
 }

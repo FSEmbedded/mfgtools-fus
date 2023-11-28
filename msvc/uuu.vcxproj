@@ -37,26 +37,26 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
@@ -112,7 +112,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>../libusb/$(Platform)/$(Configuration)/dll/libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib</AdditionalDependencies>
+      <AdditionalDependencies>..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib;$(SolutionDir)bin\$(Platform)_$(Configuration)\libzstd_static.lib</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>echo R^"####( &gt; $(SolutionDir)\..\uuu\uuu.clst
@@ -124,6 +124,12 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\emmc_burn_loader.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 type $(SolutionDir)\..\uuu\qspi_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+type $(SolutionDir)\..\uuu\fspinand_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+type $(SolutionDir)\..\uuu\nvme_burn_all.lst &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 type $(SolutionDir)\..\uuu\sd_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
@@ -147,7 +153,7 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nand_burn_loader.clst</Command>
       <TreatOutputAsContent>true</TreatOutputAsContent>
     </CustomBuildStep>
     <PostBuildEvent>
-      <Command>copy /y "$(SolutionDir)..\libusb\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
+      <Command>copy /y "..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -162,7 +168,7 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nand_burn_loader.clst</Command>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>../libusb/$(Platform)/$(Configuration)/dll/libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib</AdditionalDependencies>
+      <AdditionalDependencies>..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib;$(SolutionDir)bin\$(Platform)_$(Configuration)\libzstd_static.lib</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>echo R^"####( &gt; $(SolutionDir)\..\uuu\uuu.clst
@@ -174,6 +180,12 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\emmc_burn_loader.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 type $(SolutionDir)\..\uuu\qspi_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+type $(SolutionDir)\..\uuu\fspinand_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+type $(SolutionDir)\..\uuu\nvme_burn_all.lst &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 type $(SolutionDir)\..\uuu\sd_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
@@ -197,7 +209,7 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nand_burn_loader.clst</Command>
       <TreatOutputAsContent>true</TreatOutputAsContent>
     </CustomBuildStep>
     <PostBuildEvent>
-      <Command>copy /y "$(SolutionDir)..\libusb\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
+      <Command>copy /y "..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -217,7 +229,7 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nand_burn_loader.clst</Command>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>../libusb/$(Platform)/$(Configuration)/dll/libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib</AdditionalDependencies>
+      <AdditionalDependencies>..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib;$(SolutionDir)bin\$(Platform)_$(Configuration)\libzstd_static.lib</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>echo R^"####( &gt; $(SolutionDir)\..\uuu\uuu.clst
@@ -229,6 +241,12 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\emmc_burn_loader.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 type $(SolutionDir)\..\uuu\qspi_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+type $(SolutionDir)\..\uuu\fspinand_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+type $(SolutionDir)\..\uuu\nvme_burn_all.lst &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 type $(SolutionDir)\..\uuu\sd_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
@@ -252,7 +270,7 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nand_burn_loader.clst</Command>
       <TreatOutputAsContent>true</TreatOutputAsContent>
     </CustomBuildStep>
     <PostBuildEvent>
-      <Command>copy /y "$(SolutionDir)..\libusb\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
+      <Command>copy /y "..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -272,7 +290,7 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nand_burn_loader.clst</Command>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>../libusb/$(Platform)/$(Configuration)/dll/libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib</AdditionalDependencies>
+      <AdditionalDependencies>..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\libusb-1.0.lib;$(Platform)/$(Configuration)/libuuu.lib;$(Platform)/$(Configuration)/zlib.lib;%(AdditionalDependencies);$(Platform)/$(Configuration)/bzip2.lib;$(SolutionDir)bin\$(Platform)_$(Configuration)\libzstd_static.lib</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>echo R^"####( &gt; $(SolutionDir)\..\uuu\uuu.clst
@@ -284,6 +302,12 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\emmc_burn_loader.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 type $(SolutionDir)\..\uuu\qspi_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\qspi_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+type $(SolutionDir)\..\uuu\fspinand_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\fspinand_burn_loader.clst
+echo R^"####( &gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+type $(SolutionDir)\..\uuu\nvme_burn_all.lst &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
+echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nvme_burn_all.clst
 echo R^"####( &gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 type $(SolutionDir)\..\uuu\sd_burn_loader.lst &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
 echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\sd_burn_loader.clst
@@ -307,7 +331,7 @@ echo )####^" &gt;&gt; $(SolutionDir)\..\uuu\nand_burn_loader.clst</Command>
       <TreatOutputAsContent>true</TreatOutputAsContent>
     </CustomBuildStep>
     <PostBuildEvent>
-      <Command>copy /y "$(SolutionDir)..\libusb\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
+      <Command>copy /y "..\libusb\$(LibusbRootDir)build\$(PlatformToolset)\$(Platform)\$(Configuration)\dll\*.dll" $(Platform)\$(Configuration)\</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

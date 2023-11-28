@@ -193,7 +193,7 @@ BuiltInScriptMap::BuiltInScriptMap(const BuiltInScriptRawData*p)
 
 /**
  * @brief Auto-complete names of built-in scripts if they match `match`
- * @param[in] match The string against which the scripts' names will be machted
+ * @param[in] match The string against which the scripts' names will be matched
  * @param[in] space A separator character which shall be printed after the
  * completed script name
  */
@@ -245,24 +245,38 @@ void BuiltInScriptMap::ShowCmds(FILE * const file) const
  * @param[in] str The string of which a copy with the replacements shall be
  * created
  * @param[in] key The string which shall be replaced
- * @param[in] replace The string that shall replace ocurrences of `key`
+ * @param[in] replace The string that shall replace occurrences of `key`
  * @return A new string instance with the replacements conducted on it
  */
 static std::string replace_str(std::string str, std::string key, std::string replace)
 {
+	std::string s5, s4;
+	std::string match[] = { ".BZ2", ".ZST" };
 	if (replace.size() > 4)
 	{
 		if (replace[replace.size() - 1] == '\"')
 		{
-			if (str_to_upper(replace.substr(replace.size() - 5)) == ".BZ2\"")
+			s5 = str_to_upper(replace.substr(replace.size() - 5));
+			for (std::string it : match)
 			{
-				replace = replace.substr(0, replace.size() - 1);
-				replace += "/*\"";
+				if (s5 == it)
+				{
+					replace = replace.substr(0, replace.size() - 1);
+					replace += "/*\"";
+				}
 			}
 
-		}else if (str_to_upper(replace.substr(replace.size() - 4)) == ".BZ2")
+		}
+		else
 		{
-			replace += "/*";
+			s4 = str_to_upper(replace.substr(replace.size() - 4));
+			for (std::string it : match)
+			{
+				if (it == s4)
+				{
+					replace += "/*";
+				}
+			}
 		}
 	}
 
@@ -324,6 +338,11 @@ static constexpr BuiltInScriptRawData g_builtin_cmd[] =
 		,"burn boot loader to qspi nor flash"
 	},
 	{
+		"spi_nand",
+#include "fspinand_burn_loader.clst"
+		,"burn boot loader to spi nand flash"
+	},
+	{
 		"sd",
 #include "sd_burn_loader.clst"
 		,"burn boot loader to sd card"
@@ -337,6 +356,11 @@ static constexpr BuiltInScriptRawData g_builtin_cmd[] =
 		"spl",
 #include "spl_boot.clst"
 		,"boot spl and uboot"
+	},
+	{
+		"nvme_all",
+#include "nvme_burn_all.clst"
+		,"burn whole image io nvme storage"
 	},
 	{
 		nullptr,

@@ -120,6 +120,56 @@ public:
 	}
 };
 
+#ifdef _WIN32
+#include <conio.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
+
+int ask_passwd(char* prompt, char user[MAX_USER_LEN], char passwd[MAX_USER_LEN])
+{
+	cout << endl << prompt << " Required Login"<<endl;
+	cout << "Username:";
+	cin.getline(user, 128);
+	cout << "Password:";
+	int i = 0;
+
+#ifdef _WIN32
+	while ((passwd[i] = _getch()) != '\r') {
+		if (passwd[i] == '\b') {
+			if (i != 0) {
+				cout << "\b \b";
+				i--;
+			}
+		}
+		else {
+			cout << '*';
+			i++;
+		}
+	}
+#else
+	struct termios old, tty;
+	tcgetattr(STDIN_FILENO, &tty);
+	old = tty;
+	tty.c_lflag &= ~ECHO;
+	tcsetattr(STDIN_FILENO, TCSANOW, &tty);
+
+	string pd;
+	getline(cin, pd);
+
+	tcsetattr(STDIN_FILENO, TCSANOW, &old);
+	if(pd.size() > MAX_USER_LEN -1)
+		return -1;
+	memcpy(passwd, pd.data(), pd.size());
+	i=pd.size();
+
+#endif
+	passwd[i] = 0;
+	cout << endl;
+	return 0;
+}
+
 void print_help(bool detail = false)
 {
 	const char help[] =
@@ -132,19 +182,21 @@ void print_help(bool detail = false)
 		"                example: SDPS: boot -f flash.bin\n"
 		"    -d          Daemon mode, wait for forever.\n"
 		"    -v -V       verbose mode, -V enable libusb error\\warning info\n"
-		"    -dry	 Dry run mode, check if script or cmd correct \n"
+		"    -dry        Dry run mode, check if script or cmd correct \n"
 		"    -m          USBPATH Only monitor these paths.\n"
 		"                    -m 1:2 -m 1:3\n\n"
 		"    -t          Timeout second for wait known usb device appeared\n"
 		"    -T          Timeout second for wait next known usb device appeared at stage switch\n"
 		"    -e          set environment variable key=value\n"
 		"    -pp         usb polling period in milliseconds\n"
+		"    -dm         disable small memory\n"
 		"uuu -s          Enter shell mode. uuu.inputlog record all input commands\n"
 		"                you can use \"uuu uuu.inputlog\" next time to run all commands\n\n"
 		"uuu -udev       linux: show udev rule to avoid sudo each time \n"
 		"uuu -lsusb      List connected know devices\n"
-		"uuu -IgSerNum   Set windows registry to ignore USB serial number for known uuu devices"
-		"uuu -h -H       show help, -H means detail helps\n\n";
+		"uuu -IgSerNum   Set windows registry to ignore USB serial number for known uuu devices\n"
+		"uuu -h          show general help\n"
+		"uuu -H          show general help and detailed help for commands\n\n";
 	printf("%s", help);
 	printf("uuu [-d -m -v] -b[run] ");
 	g_BuildScripts.ShowCmds();
@@ -188,7 +240,7 @@ void print_version()
 	printf("uuu (Universal Update Utility) for nxp imx chips -- %s\n\n", uuu_get_version_string());
 }
 
-int print_cfg(const char *pro, const char * chip, const char * /*compatible*/, uint16_t pid, uint16_t vid, uint16_t bcdmin, uint16_t bcdmax, void * /*p*/)
+int print_cfg(const char *pro, const char * chip, const char * /*compatible*/, uint16_t vid, uint16_t pid, uint16_t bcdmin, uint16_t bcdmax, void * /*p*/)
 {
 	const char *ext;
 	if (strlen(chip) >= 7)
@@ -197,9 +249,9 @@ int print_cfg(const char *pro, const char * chip, const char * /*compatible*/, u
 		ext = "\t";
 
 	if (bcdmin == 0 && bcdmax == 0xFFFF)
-		printf("\t%s\t %s\t%s 0x%04x\t 0x%04x\n", pro, chip, ext, pid, vid);
+		printf("\t%s\t %s\t%s 0x%04x\t 0x%04x\n", pro, chip, ext, vid, pid);
 	else
-		printf("\t%s\t %s\t%s 0x%04x\t 0x%04x\t [0x%04x..0x%04x]\n", pro, chip, ext, pid, vid, bcdmin, bcdmax);
+		printf("\t%s\t %s\t%s 0x%04x\t 0x%04x\t [0x%04x..0x%04x]\n", pro, chip, ext, vid, pid, bcdmin, bcdmax);
 	return 0;
 }
 
@@ -305,7 +357,7 @@ public:
 
 	bool update(uuu_notify nt)
 	{
-		if (nt.type == uuu_notify::NOFITY_DEV_ATTACH)
+		if (nt.type == uuu_notify::NOTIFY_DEV_ATTACH)
 		{
 			m_dev = nt.str;
 			m_done = 0;
@@ -393,7 +445,7 @@ public:
 		if (this->m_dev == "Prep" && g_start_usb_transfer)
 			return;
 
-		if (nt->type == uuu_notify::NOFITY_DEV_ATTACH)
+		if (nt->type == uuu_notify::NOTIFY_DEV_ATTACH)
 		{
 			cout << "New USB Device Attached at " << nt->str << endl;
 		}
@@ -706,11 +758,11 @@ int runshell(int shell)
 		string cmd;
 		ofstream log("uuu.inputlog", ofstream::binary);
 		log << "uuu_version "
-			<< ((uuu_get_version() & 0xFF0000) >> 16)
+			<< ((uuu_get_version() & 0xFF000000) >> 24)
 			<< "."
-			<< ((uuu_get_version() & 0xFF00) >> 8)
+			<< ((uuu_get_version() & 0xFFF000) >> 12)
 			<< "."
-			<< ((uuu_get_version() & 0xFF))
+			<< ((uuu_get_version() & 0xFFF))
 			<< endl;
 		while (1)
 		{
@@ -784,6 +836,7 @@ void print_lsusb()
 }
 
 #ifdef WIN32
+
 int ignore_serial_number(const char *pro, const char *chip, const char */*comp*/, uint16_t vid, uint16_t pid, uint16_t /*bcdlow*/, uint16_t /*bcdhigh*/, void */*p*/)
 {
 	printf("\t %s\t %s\t 0x%04X\t0x%04X\n", chip, pro, vid, pid);
@@ -881,7 +934,14 @@ int main(int argc, char **argv)
 			if (s == "-d")
 			{
 				deamon = 1;
-			}else if (s == "-s")
+				uuu_set_small_mem(0);
+
+			}
+			else if (s == "-dm")
+			{
+				uuu_set_small_mem(0);
+			}
+			else if (s == "-s")
 			{
 				shell = 1;
 				g_verbose = 1;
@@ -947,7 +1007,7 @@ int main(int argc, char **argv)
 				i++;
 				if (_putenv(argv[i]))
 				{
-					printf("error, failed to set '%s', environment parameter must have the from key=value\n", argv[i]);
+					printf("error, failed to set '%s', environment parameter must have the form key=value\n", argv[i]);
 					return -1;
 				}
 			}
@@ -1031,6 +1091,8 @@ int main(int argc, char **argv)
 
 	signal(SIGINT, ctrl_c_handle);
 
+	uuu_set_askpasswd(ask_passwd);
+
 	if (deamon && shell)
 	{
 		printf("Error: -d -s Can't apply at the same time\n");
@@ -1101,9 +1163,9 @@ int main(int argc, char **argv)
 
 	if (ret)
 	{
-		runshell(shell);
-
-		cout << g_vt_red << "\nError: " << g_vt_default <<  uuu_get_last_err_string();
+		ret = runshell(shell);
+		if(ret)
+			cout << g_vt_red << "\nError: " << g_vt_default <<  uuu_get_last_err_string();
 		return ret;
 	}
 
