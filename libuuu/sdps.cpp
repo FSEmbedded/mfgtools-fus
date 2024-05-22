@@ -170,7 +170,7 @@ int SDPSCmd::run(CmdCtx *pro)
 
 	size_t sz = GetContainerActualSize(p, offset, rom->flags & ROM_INFO_HID_ROMAPI);
 
-	/* Skip to SPL in FuS NBoot and overwrite sz */
+	/* Skip to SPL/Container in FuS NBoot and overwrite sz */
 	offset += GetBinaryFromNBoot(p, offset, &sz);
 
 	if (!(rom->flags & ROM_INFO_HID_NO_CMD))

@@ -227,6 +227,8 @@ struct fsheader
 size_t GetBinaryFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t * size)
 {
 	struct fsheader* head;
+	struct fsheader head_temp = { 0 };
+	bool bBoardID = false;
 	uint8_t* start = p->data() + offset;
 	uint64_t header_size = sizeof(struct fsheader);
 	uint64_t file_size = 0;
@@ -261,9 +263,25 @@ size_t GetBinaryFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t * size
 			return pos + header_size;
 		}
 
+		/* Got new BOOT container, so write the BOARD-ID to the placeholder */
+		if (!strcmp(sType, "BOOT")) {
+			pos += header_size;
+			if (bBoardID)
+				memcpy((void *)(pos + file_size), &head_temp, sizeof(struct fsheader));
+			*size = *size - pos;
+			return pos;
+		}
+
 		/* For these types another header is located directly after */
-		if ((!strcmp(sType, "BOARD-ID") || !strcmp(sType, "NBOOT") || !strcmp(sType, "BOARD-CONFIGS")))
+		if ((!strcmp(sType, "NBOOT") || !strcmp(sType, "BOARD-CONFIGS")))
 			file_size = 0;
+
+		/* Save the Board-ID for the container NBoot */
+		if (!strcmp(sType, "BOARD-ID")) {
+			memcpy(&head_temp, head, sizeof(struct fsheader));
+			bBoardID = true;
+			file_size = 0;
+		}
 
 		/* Update position of the next header */
 		pos += header_size + file_size;
