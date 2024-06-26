@@ -212,23 +212,46 @@ size_t GetFlashHeaderSize(shared_ptr<DataBuffer> p, size_t offset)
 struct fsheader
 {
 	/* fsheader0_0 */
-	byte magic[4];
-	uint32_t file_size_low;
-	uint32_t file_size_high;
-	uint16_t flags;
-	byte padsize;
-	byte version;
+	uint8_t magic[4]; // 4 FSLX(fix)
+	uint32_t file_size_low; // 8 
+	uint32_t file_size_high; // 12
+	uint16_t flags; // 14 Container-Flag?
+	uint8_t padsize; // 15
+	uint8_t version; // 16
 
 	/* fsheader1_0 */
-	byte type[16];
-	byte descr[32];
+	uint8_t type[16]; // 32
+	uint8_t descr[32]; // 64
 };
+
+bool IsBinary(char* sType) 
+{
+	if (!strcmp(sType, "SPL") || !strcmp(sType, "BOOT-INFO"))
+		return true;
+
+	return false;
+}
+
+bool IsBoardID(char* sType)
+{
+	if (!strcmp(sType, "BOARD-ID"))
+		return true;
+
+	return false;
+}
+
+bool NextHeaderDirectlyAfter(char* sType)
+{
+	/* For these types another header is located directly after */
+	if ((!strcmp(sType, "NBOOT") || !strcmp(sType, "BOARD-CONFIGS") || !strcmp(sType, "BOARD-INFO") || !strcmp(sType, "BOARD-ID")))
+		return true;
+
+	return false;
+}
 
 size_t GetBinaryFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t * size)
 {
 	struct fsheader* head;
-	struct fsheader head_temp = { 0 };
-	bool bBoardID = false;
 	uint8_t* start = p->data() + offset;
 	uint64_t header_size = sizeof(struct fsheader);
 	uint64_t file_size = 0;
@@ -258,30 +281,13 @@ size_t GetBinaryFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t * size
 			break;
 		}
 
-		if (!strcmp(sType, "SPL")) {
+		if (IsBinary(sType)) {
 			*size = file_size;
 			return pos + header_size;
 		}
 
-		/* Got new BOOT container, so write the BOARD-ID to the placeholder */
-		if (!strcmp(sType, "BOOT")) {
-			pos += header_size;
-			if (bBoardID)
-				memcpy((void *)(pos + file_size), &head_temp, sizeof(struct fsheader));
-			*size = *size - pos;
-			return pos;
-		}
-
-		/* For these types another header is located directly after */
-		if ((!strcmp(sType, "NBOOT") || !strcmp(sType, "BOARD-CONFIGS")))
+		if (NextHeaderDirectlyAfter(sType))
 			file_size = 0;
-
-		/* Save the Board-ID for the container NBoot */
-		if (!strcmp(sType, "BOARD-ID")) {
-			memcpy(&head_temp, head, sizeof(struct fsheader));
-			bBoardID = true;
-			file_size = 0;
-		}
 
 		/* Update position of the next header */
 		pos += header_size + file_size;
@@ -289,6 +295,110 @@ size_t GetBinaryFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t * size
 
 	*size = p->size();
 	return pos;
+}
+
+size_t GetBoardIDFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t* size)
+{
+	struct fsheader* head;
+	uint8_t* start = p->data() + offset;
+	uint64_t header_size = sizeof(struct fsheader);
+	uint64_t file_size = 0;
+	size_t pos = 0;
+	char sMagic[4 + 1];
+	char sType[16 + 1];
+	sMagic[4] = '\0';
+	sType[16] = '\0';
+	bool bMagic = false;
+
+	do {
+		/* Set current header */
+		head = (struct fsheader*)(start + pos);
+
+		/* Get filesize of the data at current header */
+		file_size = head->file_size_high;
+		file_size = file_size << 32;
+		file_size = file_size | (head->file_size_low & 0xFFFFFFFF);
+
+		/* Convert struct elements to comparable strings */
+		memcpy(sMagic, head->magic, sizeof(head->magic));
+		memcpy(sType, head->type, sizeof(head->type));
+
+		bMagic = !strcmp(sMagic, "FSLX");
+		if (!bMagic) {
+			pos = 0;
+			break;
+		}
+
+		if (IsBoardID(sType)) {
+			*size = header_size;
+			return pos;
+		}
+
+		if (NextHeaderDirectlyAfter(sType))
+			file_size = 0;
+
+		/* Update position of the next header */
+		pos += header_size + file_size;
+	} while (bMagic);
+
+	*size = 0;
+	return 0;
+}
+
+size_t GetRestOfFileFromNBoot(shared_ptr<DataBuffer> p, size_t offset, size_t* size)
+{
+	struct fsheader* head;
+	uint8_t* start = p->data() + offset;
+	uint64_t header_size = sizeof(struct fsheader);
+	uint64_t file_size = 0;
+	size_t pos = 0;
+	char sMagic[4 + 1];
+	char sType[16 + 1];
+	sMagic[4] = '\0';
+	sType[16] = '\0';
+	bool bMagic = false;
+	bool bBinaryReached = false;
+
+	do {
+		/* Set current header */
+		head = (struct fsheader*)(start + pos);
+
+		/* Get filesize of the data at current header */
+		file_size = head->file_size_high;
+		file_size = file_size << 32;
+		file_size = file_size | (head->file_size_low & 0xFFFFFFFF);
+
+		/* Convert struct elements to comparable strings */
+		memcpy(sMagic, head->magic, sizeof(head->magic));
+		memcpy(sType, head->type, sizeof(head->type));
+
+		bMagic = !strcmp(sMagic, "FSLX");
+		if (!bMagic) {
+			pos = 0;
+			break;
+		}
+
+		/* After the binary is reached, there can only be a BoardID to skip */
+		if (bBinaryReached) {
+			if (IsBoardID(sType))
+				pos += header_size;
+
+			*size -= pos;
+			return pos;
+		}
+
+		if (NextHeaderDirectlyAfter(sType))
+			file_size = 0;
+
+		if (IsBinary(sType))
+			bBinaryReached = true;
+
+		/* Update position of the next header */
+		pos += header_size + file_size;
+	} while (bMagic);
+
+	*size = 0;
+	return 0;
 }
 
 bool IsMBR(shared_ptr<DataBuffer> p)

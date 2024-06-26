@@ -170,6 +170,10 @@ int SDPSCmd::run(CmdCtx *pro)
 
 	size_t sz = GetContainerActualSize(p, offset, rom->flags & ROM_INFO_HID_ROMAPI);
 
+	/* Store the original offset and size */
+	size_t orig_offset = offset;
+	size_t orig_sz = sz;
+
 	/* Skip to SPL/Container in FuS NBoot and overwrite sz */
 	offset += GetBinaryFromNBoot(p, offset, &sz);
 
@@ -199,12 +203,34 @@ int SDPSCmd::run(CmdCtx *pro)
 
 	/* If an error occurs, output the offset and size of the image found */
 	if (ret)
-		printf("offset = 0x%llx, size = 0x%llx\n", offset, sz);
+		printf("Binary: offset = 0x%llx, size = 0x%llx\n", offset, sz);
 
 	if (ret ==  0)
 	{
 		SDPBootlogCmd log(nullptr);
 		log.run(pro);
+	}
+
+	/* Restore original offset and size */
+	offset = orig_offset;
+	sz = orig_sz;
+
+	/* SPL or BOOT-CONTAINER transmitted, next is BOARD-ID */
+	offset += GetBoardIDFromNBoot(p, offset, &sz);
+	if (sz) {
+		report.write(p->data() + offset, sz, 2);
+		printf("BoardID (optional): offset = 0x%llx, size = 0x%llx\n", offset, sz);
+	}
+
+	/* Restore original offset and size */
+	offset = orig_offset;
+	sz = orig_sz;
+
+	/* BOARD-ID transmitted, next is Rest */
+	offset += GetRestOfFileFromNBoot(p, offset, &sz);
+	if (sz) {
+		report.write(p->data() + offset, sz, 2);
+		printf("RestOfFile (optional): offset = 0x%llx, size = 0x%llx\n", offset, sz);
 	}
 
 	return ret;

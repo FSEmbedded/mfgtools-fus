@@ -71,3 +71,5 @@ const ROM_INFO * search_rom_info(const ConfigItem *item);
 size_t GetContainerActualSize(std::shared_ptr<DataBuffer> p, size_t offset, bool bROMAPI=false);
 size_t GetFlashHeaderSize(std::shared_ptr<DataBuffer> p, size_t offset = 0);
 size_t GetBinaryFromNBoot(std::shared_ptr<DataBuffer> p, size_t offset, size_t * size);
+size_t GetBoardIDFromNBoot(std::shared_ptr<DataBuffer> p, size_t offset, size_t * size);
+size_t GetRestOfFileFromNBoot(std::shared_ptr<DataBuffer> p, size_t offset, size_t* size);
