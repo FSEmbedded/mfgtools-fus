@@ -13,3 +13,6 @@ Makefile
 CMakeCache.txt
 *.clst
 *.snap
+node_modules
+build
+msvc/bin/

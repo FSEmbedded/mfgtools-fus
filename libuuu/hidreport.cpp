@@ -78,10 +78,11 @@ int HIDReport::write(const void *p, size_t sz, uint8_t report_id)
 		m_out_buff[0] = report_id;
 
 		size_t s = sz - off;
-		size_t copy_sz = s;
 
-		if (copy_sz > m_size_out)
-			copy_sz = m_size_out;
+		if (s > m_size_out)
+			s = m_size_out;
+
+		memcpy(m_out_buff.data() + m_size_payload, buff + off, s);
 
 		/*
 		 * The Windows HIDAPI is ver strict. It always require to send
@@ -89,11 +90,8 @@ int HIDReport::write(const void *p, size_t sz, uint8_t report_id)
 		 * Therefore we must to send m_size_out buffers for HID ID 2
 		 * albeit it may not required for the last buffer.
 		 */
-		if (s > m_size_out || report_id == 2)
+		if (report_id == 2)
 			s = m_size_out;
-
-		/* copy_sz can't be bigger then input data size, otherwise access unpaged memory */
-		memcpy(m_out_buff.data() + m_size_payload, buff + off, copy_sz);
 
 		int ret = m_pdev->write(m_out_buff.data(), s + m_size_payload);
 
