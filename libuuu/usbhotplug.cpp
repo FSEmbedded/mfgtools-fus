@@ -298,8 +298,7 @@ static int open_libusb(libusb_device *dev, void **usb_device_handle)
 		int ret;
 		if ((ret = libusb_open(dev, (libusb_device_handle **)(usb_device_handle))) < 0)
 		{
-			if ((ret != LIBUSB_ERROR_NOT_SUPPORTED && ret != LIBUSB_ERROR_ACCESS)
-			    || (retry == 0))
+			if (retry == 0)
 			{
 				set_last_err_string("Failure open usb device" TRY_SUDO);
 				return -1;
