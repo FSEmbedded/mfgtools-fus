@@ -34,7 +34,6 @@
 #include "libuuu.h"
 #include "liberror.h"
 #include "libusb.h"
-#include "zip.h"
 
 extern "C"
 {

@@ -33,7 +33,6 @@
 #include "libcomm.h"
 #include "liberror.h"
 #include "trans.h"
-#include "zip.h"
 
 #include <cstring>
 

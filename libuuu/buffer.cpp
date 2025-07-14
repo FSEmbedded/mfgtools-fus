@@ -37,15 +37,11 @@
 #include <fstream>
 #include "libcomm.h"
 #include "libuuu.h"
-#include "zip.h"
 #include "fat.h"
 #include "tar.h"
 #include <string.h>
-#include "bzlib.h"
 #include "stdio.h"
 #include <limits>
-#include "http.h"
-#include "zstd.h"
 #include "libusb.h"
 
 #ifdef WIN32
@@ -344,87 +340,12 @@ public:
 	}
 };
 
-static class FSHttp : public FSNetwork
-{
-public:
-	FSHttp() { m_Prefix = "HTTP://"; m_Port = 80; }
-	int load(const string &backfile, const string &filename, shared_ptr<FileBuffer> p) override;
-	virtual bool exist(const string &backfile, const string &filename) override
-	{
-		shared_ptr<HttpStream> http = make_shared<HttpStream>();
-
-		if (http->HttpGetHeader(backfile, filename, m_Port, typeid(*this) != typeid(FSHttp)))
-			return false;
-
-		return true;
-	};
-	int for_each_ls(uuu_ls_file /*fn*/, const string &/*backfile*/, const string &/*filename*/, void * /*p*/) override { return 0; };
-	int get_file_timesample(const string &/*filename*/, uint64_t * /*ptime*/) override { return 0; };
-	int http_load(shared_ptr<HttpStream> http, shared_ptr<FileBuffer> p, string filename);
-}g_fshttp;
-
-static class FSHttps : public FSHttp
-{
-public:
-	FSHttps() { m_Prefix = "HTTPS://"; m_Port = 443; }
-}g_fshttps;
-
-int FSHttp::http_load(shared_ptr<HttpStream> http, shared_ptr<FileBuffer> p, string filename)
-{
-	size_t max = 0x10000;
-
-	uuu_notify ut;
-	ut.type = uuu_notify::NOTIFY_DOWNLOAD_START;
-	ut.str = (char*)filename.c_str();
-	call_notify(ut);
-
-	ut.type = uuu_notify::NOTIFY_TRANS_SIZE;
-	ut.total = p->size();
-	call_notify(ut);
-
-	for (size_t i = 0; i < p->size() && !p->m_reset_stream; i += max)
-	{
-		size_t sz = p->size() - i;
-		if (sz > max)
-			sz = max;
-		if (http->HttpDownload((char*)(p->data() + i), sz) < 0)
-		{
-			atomic_fetch_or(&p->m_dataflags, FILEBUFFER_FLAG_ERROR_BIT);
-			p->m_request_cv.notify_all();
-			return -1;
-		}
-		p->m_available_size = i + sz;
-		p->m_request_cv.notify_all();
-
-		ut.type = uuu_notify::NOTIFY_TRANS_POS;
-		ut.total = i + sz;
-		call_notify(ut);
-	}
-
-	atomic_fetch_or(&p->m_dataflags, FILEBUFFER_FLAG_LOADED | FILEBUFFER_FLAG_NEVER_FREE);
-	p->m_request_cv.notify_all();
-
-	ut.type = uuu_notify::NOTIFY_DOWNLOAD_END;
-	ut.str = (char*)filename.c_str();
-	call_notify(ut);
-	return 0;
-}
-
 class FSBackFile : public FSBasic
 {
 public:
 	int get_file_timesample(const string &filename, uint64_t *ptime) override;
 
 };
-
-static class FSZip : public FSBackFile
-{
-public:
-	FSZip() { m_ext = ".ZIP"; };
-	int load(const string &backfile, const string &filename, shared_ptr<FileBuffer> p) override;
-	bool exist(const string &backfile, const string &filename) override;
-	int for_each_ls(uuu_ls_file fn, const string &backfile, const string &filename, void *p) override;
-}g_fszip;
 
 static class FSTar: public FSBackFile
 {
@@ -470,180 +391,6 @@ public:
 	virtual std::shared_ptr<CommonStream> create_stream() { return nullptr; };
 };
 
-
-class Bz2stream : public CommonStream
-{
-	bz_stream m_strm;
-	size_t m_in_size = 0;
-	size_t m_out_size = 0;
-
-public:
-	Bz2stream() { memset(&m_strm, 0, sizeof(m_strm));  BZ2_bzDecompressInit(&m_strm, 0, 0); }
-	virtual ~Bz2stream()
-	{
-		BZ2_bzDecompressEnd(&m_strm);
-	}
-	virtual int set_input_buff(void* p, size_t sz) override
-	{
-		m_strm.next_in = (char*)p;
-		m_strm.avail_in = m_in_size = sz;
-		return 0;
-	};
-	virtual int set_output_buff(void* p, size_t sz) override
-	{
-		m_strm.next_out = (char*)p;
-		m_strm.avail_out = m_out_size = sz;
-		return 0;
-	};
-	virtual size_t get_input_pos() override
-	{
-		return m_in_size - m_strm.avail_in;
-	};
-	virtual size_t get_output_pos() override
-	{
-		return m_out_size - m_strm.avail_out;
-	};
-	virtual int decompress() override
-	{
-		return BZ2_bzDecompress(&m_strm);
-	};
-
-	virtual size_t get_default_input_size() override { return 0x10000; }
-};
-
-static class FSBz2 : public FSCompressStream
-{
-public:
-	FSBz2() { m_ext = ".BZ2"; };
-	virtual bool seekable(const string& backfile) override;
-	virtual std::shared_ptr<CommonStream> create_stream() override { return std::make_shared<Bz2stream>(); }
-	virtual std::shared_ptr<FragmentBlock> ScanCompressblock(const string& backfile, size_t& input_offset, size_t& output_offset) override;
-
-}g_fsbz2;
-
-class Gzstream : public CommonStream
-{
-	z_stream m_strm;
-	size_t m_in_size = 0;
-	size_t m_out_size = 0;
-
-public:
-	Gzstream()
-	{
-		memset(&m_strm, 0, sizeof(m_strm));
-		inflateInit2(&m_strm, 15 + 16);
-	}
-	virtual ~Gzstream()
-	{
-		deflateEnd(&m_strm);
-	}
-	virtual int set_input_buff(void* p, size_t sz) override
-	{
-		m_strm.next_in = (Bytef*)p;
-		m_strm.avail_in = m_in_size = sz;
-		return 0;
-	};
-	virtual int set_output_buff(void* p, size_t sz) override
-	{
-		m_strm.next_out = (Bytef*)p;
-		m_strm.avail_out = m_out_size = sz;
-		return 0;
-	};
-	virtual size_t get_input_pos() override
-	{
-		return m_in_size - m_strm.avail_in;
-	};
-	virtual size_t get_output_pos() override
-	{
-		return m_out_size - m_strm.avail_out;
-	};
-	virtual int decompress() override
-	{
-		return inflate(&m_strm, Z_SYNC_FLUSH);
-	};
-
-	virtual size_t get_default_input_size() override { return 0x10000; }
-};
-
-static class FSGz : public FSCompressStream
-{
-public:
-	FSGz() { m_ext = ".GZ"; };
-	virtual std::shared_ptr<CommonStream> create_stream() { return std::make_shared<Gzstream>(); }
-}g_fsgz;
-
-class ZstdStream:public CommonStream
-{
-	ZSTD_DCtx* m_dctx;
-	ZSTD_outBuffer m_output = { 0, 0, 0 };
-	ZSTD_inBuffer m_input = { 0, 0, 0 };
-
-public:
-	virtual int set_input_buff(void* p, size_t sz) override
-	{
-		m_input.src = p;
-		m_input.pos = 0;
-		m_input.size = sz;
-		return 0;
-	};
-	virtual int set_output_buff(void* p, size_t sz) override
-	{
-		m_output.dst = p;
-		m_output.pos = 0;
-		m_output.size = sz;
-		return 0;
-	};
-	virtual size_t get_input_pos() override
-	{
-		return m_input.pos;
-	};
-	virtual size_t get_output_pos() override
-	{
-		return m_output.pos;
-	};
-
-	virtual int decompress() override
-	{
-		return ZSTD_decompressStream(m_dctx, &m_output, &m_input);
-	};
-
-	virtual size_t get_default_input_size() override
-	{
-		return ZSTD_DStreamInSize();
-	}
-
-	size_t decompress_size(const string& backfile) override
-	{
-		shared_ptr<FileBuffer> inp = get_file_buffer(backfile, true);
-		if (inp == nullptr)
-		{
-			return 0;
-		}
-		size_t sz = ZSTD_DStreamInSize();
-		shared_ptr<DataBuffer> pb = inp->request_data(0, sz);
-		if (!pb)
-			return 0;
-		size_t decompressed_sz = ZSTD_getFrameContentSize(pb->data(), sz);
-
-		return decompressed_sz;
-	}
-	ZstdStream()
-	{
-		m_dctx = ZSTD_createDCtx();
-	};
-	virtual ~ZstdStream()
-	{
-		ZSTD_freeDCtx(m_dctx);
-	}
-};
-
-static class FSzstd : public FSCompressStream
-{
-public:
-	FSzstd() { m_ext = ".ZST"; };
-	virtual std::shared_ptr<CommonStream> create_stream() { return make_shared<ZstdStream>(); };
-}g_FSzstd;
-
 static class FS_DATA
 {
 public:
@@ -651,14 +398,8 @@ public:
 	FS_DATA()
 	{
 		m_pFs.push_back(&g_fsflat);
-		m_pFs.push_back(&g_fszip);
 		m_pFs.push_back(&g_fstar);
-		m_pFs.push_back(&g_fsbz2);
 		m_pFs.push_back(&g_fsfat);
-		m_pFs.push_back(&g_fsgz);
-		m_pFs.push_back(&g_FSzstd);
-		m_pFs.push_back(&g_fshttps);
-		m_pFs.push_back(&g_fshttp);
 	}
 
 	int get_file_timesample(const string &filename, uint64_t *ptimesample)
@@ -741,73 +482,6 @@ int FSBackFile::get_file_timesample(const string &filename, uint64_t *ptime)
 		return -1;
 	
 	return g_fs_data.get_file_timesample(back, ptime);
-}
-
-bool FSZip::exist(const string &backfile, const string &filename)
-{
-	Zip zip;
-	if (zip.Open(backfile))
-		return false;
-
-	return zip.check_file_exist(filename);
-}
-
-int FSZip::for_each_ls(uuu_ls_file fn, const string &backfile, const string &filename, void *p)
-{
-	Zip zip;
-
-        if (zip.Open(backfile))
-                return -1;
-
-	for(auto it = zip.m_filemap.begin(); it!=zip.m_filemap.end(); ++it)
-	{
-		if(it->first.substr(0, filename.size()) == filename || filename.empty())
-		{
-			string name = backfile;
-			name += "/";
-			name += it->first;
-			fn(name.c_str()+1, p);
-		}
-	}
-
-	return 0;
-}
-
-int zip_async_load(string zipfile, string fn, shared_ptr<FileBuffer> buff)
-{
-	std::lock_guard<mutex> lock(buff->m_async_mutex);
-
-	Zip zip;
-	if (zip.Open(zipfile))
-		return -1;
-
-	if(zip.get_file_buff(fn, buff))
-		return -1;
-
-	buff->m_available_size = buff->m_DataSize;
-	atomic_fetch_or(&buff->m_dataflags, FILEBUFFER_FLAG_LOADED);
-
-	buff->m_request_cv.notify_all();
-	return 0;
-}
-
-int FSZip::load(const string &backfile, const string &filename, shared_ptr<FileBuffer> p)
-{
-	Zip zip;
-
-	if (zip.Open(backfile))
-		return -1;
-
-	if (!zip.check_file_exist(filename))
-		return -1;
-
-	if(zip.get_file_buff(filename, p))
-		return -1;
-
-	atomic_fetch_or(&p->m_dataflags, FILEBUFFER_FLAG_LOADED);
-	p->m_request_cv.notify_all();
-
-	return 0;
 }
 
 bool FSTar::exist(const string &backfile, const string &filename)
@@ -929,115 +603,6 @@ int FSCompressStream::for_each_ls(uuu_ls_file fn, const string &backfile, const 
 
 	fn(str.c_str() + 1, p);
 	return 0;
-}
-
-class Bz2FragmentBlock: public FragmentBlock
-{
-public:
-	virtual ~Bz2FragmentBlock() {}
-	int DataConvert() override
-	{
-		std::lock_guard<mutex> lock(m_mutex);
-
-		m_actual_size = m_output_size;
-		m_data.resize(m_output_size);
-
-		shared_ptr<DataBuffer> input = m_input->request_data(m_input_offset, m_input_sz);
-		if (!input)
-			return -1;
-		unsigned int len = m_output_size;
-		m_ret = BZ2_bzBuffToBuffDecompress((char*)m_data.data(),
-			&len,
-			(char*)input->data(),
-			m_input_sz,
-			0,
-			0);
-
-		m_actual_size = len;
-		m_data.resize(m_actual_size);
-
-		assert(m_output_size >= m_actual_size);
-
-		atomic_fetch_or(&m_dataflags, (int)CONVERT_DONE);
-		return m_ret;
-	}
-};
-
-shared_ptr<FragmentBlock> FSBz2::ScanCompressblock(const string& backfile, size_t& input_offset, size_t& output_offset)
-{
-	shared_ptr<FileBuffer> pbz;
-
-	pbz = get_file_buffer(backfile, true);
-	if (pbz == nullptr) {
-		return NULL;
-	}
-
-	size_t request_size = 1 * 1000 * 1000;
-	shared_ptr<DataBuffer> pd = pbz->request_data(input_offset, request_size);
-	if (!pd)
-		return NULL;
-
-	uint8_t* p1 = pd->data();
-
-	size_t sz = min(request_size - 10, pd->size());
-
-	for (size_t i = 0; i < sz; i++)
-	{
-		uint16_t* header = (uint16_t*)p1++;
-		if (*header == 0x5a42) //"BZ"
-		{
-			uint32_t* magic1 = (uint32_t*)&pd->at(i + 4);
-			if (*magic1 == 0x26594131 && pd->at(i + 2) == 'h') //PI 3.1415926
-			{
-				uint16_t* magic2 = (uint16_t*)&pd->at(i + 8);
-				if (*magic2 == 0x5953)
-				{
-					shared_ptr<FragmentBlock> p = shared_ptr<FragmentBlock>(new Bz2FragmentBlock);
-
-					p->m_input = pbz;
-					p->m_actual_size = 0;
-					p->m_dataflags = 0;
-					p->m_input_offset = input_offset + i;
-					p->m_output_offset = output_offset;
-					p->m_output_size = (pd->at(i + 3) - '0') * 100 * 1000; /* not l024 for bz2 */
-					p->m_input_sz = request_size;
-
-					input_offset += i + 8;
-
-					output_offset += p->m_output_size;
-					return p;
-				}
-			}
-		}
-	}
-
-	return NULL;
-}
-
-bool FSBz2::seekable(const string& backfile)
-{
-	shared_ptr<FileBuffer> file = get_file_buffer(backfile, true);
-	shared_ptr<DataBuffer> p = file->request_data(0, 1024*1024);
-
-	if (!p)
-		return false;
-
-	int header_num = 0;
-	uint8_t* ptr = p->data();
-
-	for (size_t i = 0; i < p->size(); i++)
-	{
-		if (ptr[0] == 'B' && ptr[1] == 'Z' && ptr[2] == 'h' && ptr[4] == '1' && ptr[5] == 'A' && ptr[6] == 'Y' && ptr[7] == '&' && ptr[8] == 'S' && ptr[9] == 'Y')
-		{
-			header_num++;
-		}
-		ptr++;
-
-		if (header_num > 1)
-			return true;
-	}
-
-	return false;
 }
 
 int FSCompressStream::Decompress(const string& backfile, shared_ptr<FileBuffer>outp)
@@ -2011,23 +1576,6 @@ int FSBasic::PreloadWorkThread(shared_ptr<FileBuffer>outp)
 		outp->m_request_cv.notify_all();
 	}
 	return 0;
-}
-
-int FSHttp::load(const string& backfile, const string& filename, shared_ptr<FileBuffer> p)
-{
-	shared_ptr<HttpStream> http = make_shared<HttpStream>();
-
-	if (http->HttpGetHeader(backfile, filename, m_Port, typeid(*this) == typeid(FSHttps)))
-		return -1;
-
-	size_t sz = http->HttpGetFileSize();
-
-	p->resize(sz);
-
-	atomic_fetch_or(&p->m_dataflags, FILEBUFFER_FLAG_KNOWN_SIZE);
-	p->m_request_cv.notify_all();
-
-	return http_load(http, p, backfile);
 }
 
 void uuu_set_small_mem(uint32_t val)

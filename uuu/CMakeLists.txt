@@ -5,25 +5,39 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_SKIP_RPATH ON)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBUSB REQUIRED libusb-1.0>=1.0.16)
-pkg_check_modules(LIBZ REQUIRED zlib)
-pkg_check_modules(LIBZSTD REQUIRED libzstd)
 find_package(Threads)
-pkg_check_modules(TINYXML2 REQUIRED tinyxml2)
-
-if (STATIC)
-set(OPENSSL_USE_STATIC_LIBS TRUE)
-endif()
-
-find_package(OpenSSL)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -O2")
-
-if (STATIC)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++ -static-libgcc")
-set(TINYXML2_LIBRARY_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/../tinyxml2")
-set(TINYXML2_LIBRARIES "tinyxml2.a")
-endif()
+
+set(STATIC_INCLUDE_DIRS
+	"../systemd/src/systemd/"
+	"../systemd/src/libudev/"
+	"../libusb/libusb/"
+	"../zlib/"
+	"../tinyxml2/"
+)
+
+set(STATIC_LIBRARY_DIRS
+	"/usr/lib/gcc/x86_64-redhat-linux/14/"
+	"/lib64/"
+	"../systemd/build/"
+	"../libusb/libusb/.libs/"
+	"../zlib/"
+	"../tinyxml2/"
+)
+
+set(STATIC_LIBRARIES
+	"tinyxml2.a"
+	"libz.a"
+	"libusb-1.0.a"
+	"libudev.a"
+	"libsystemd.a"
+	"libcap.a"
+	"libstdc++.a"
+	"libm.a"
+	"libc.a"
+)
 
 set(LSTS
 	uuu.lst
@@ -39,7 +53,7 @@ set(LSTS
 	nvme_burn_all.lst
 )
 
-link_directories(${CMAKE_CURRENT_SOURCE_DIR}/libuuu ${LIBUSB_LIBRARY_DIRS} ${LIBZSTD_LIBRARY_DIRS} ${LIBZ_LIBRARY_DIRS} ${TINYXML2_LIBRARY_DIRS})
+link_directories(${CMAKE_CURRENT_SOURCE_DIR}/libuuu ${STATIC_LIBRARY_DIRS} ${LIBC_LIBRARY_DIRS} ${LIBM_LIBRARY_DIRS} ${LIBSTDCPP_LIBRARY_DIRS} ${LIBCAP_LIBRARY_DIRS} ${LIBSYSTEMD_LIBRARY_DIRS} ${LIBUDEV_LIBRARY_DIRS} ${LIBUSB_LIBRARY_DIRS} ${LIBZ_LIBRARY_DIRS} ${TINYXML2_LIBRARY_DIRS})
 
 set(CLIST_EXECUTABLE ${CMAKE_CURRENT_SOURCE_DIR}/gen_txt_include.sh)
 set(generated_files_dir "${CMAKE_BINARY_DIR}/uuu/gen")
@@ -65,7 +79,7 @@ endfunction()
 
 preprocess_clst(CLSTS ${LSTS})
 
-include_directories(${generated_files_dir})
+include_directories(${generated_files_dir} ${STATIC_INCLUDE_DIRS})
 
 set(SOURCES
 	uuu.cpp
@@ -75,7 +89,7 @@ set(SOURCES
 )
 
 add_executable(uuu ${SOURCES})
-target_link_libraries(uuu uuc_s ${OPENSSL_LIBRARIES} ${LIBUSB_LIBRARIES} ${LIBZ_LIBRARIES} ${LIBZSTD_LIBRARIES} ${TINYXML2_LIBRARIES} dl bz2)
+target_link_libraries(uuu uuc_s -static -nodefaultlibs ${STATIC_LIBRARIES} gcc_eh gcc)
 
 install(TARGETS uuu DESTINATION bin)
 target_compile_definitions(uuu

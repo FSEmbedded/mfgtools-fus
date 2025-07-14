@@ -166,15 +166,9 @@ public:
 	friend class DataBuffer;
 	friend class FSBase;
 	friend class FSFlat;
-	friend class FSHttps;
-	friend class FSHttp;
-	friend class FSGz;
-	friend class FSzstd;
 	friend class FSCompressStream;
 	friend class Fat;
 	friend class Tar;
-	friend class Zip;
-	friend class Zip_file_Info;
 	enum class ALLOCATION_WAYS
 	{
 		MALLOC,
