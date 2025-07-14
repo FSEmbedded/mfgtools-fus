@@ -6,8 +6,10 @@ unset ARCH
 unset CROSS_COMPILE
 
 pushd zlib/
-./configure --static && make -j6
+cmake --fresh . && make -j6
 popd
+# CMake changes the zconf.h. Revert the changes to clean our git version for uuu
+git restore zlib/zconf.h
 
 if [ ! -d systemd ]; then
 	git clone https://github.com/systemd/systemd.git
