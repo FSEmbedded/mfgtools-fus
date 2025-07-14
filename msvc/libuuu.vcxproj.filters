@@ -104,9 +104,6 @@
     <ClCompile Include="..\libuuu\fastboot.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\libuuu\zip.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\libuuu\fat.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -117,9 +114,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\libuuu\hidreport.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\libuuu\http.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\libuuu\bmap.cpp">
